@@ -79,6 +79,12 @@ class Database:
         from app.database.user_audit_migrations import apply_user_audit_migrations
 
         await apply_user_audit_migrations(self._db_path)
+        from app.database.reports_migrations import apply_all_reports_migrations
+
+        await apply_all_reports_migrations(self._db_path)
+        from app.database.live_geo_migrations import apply_live_geo_migrations
+
+        await apply_live_geo_migrations(self._db_path)
         await self._migrate_chats_timeline_index()
         logger.info("База инициализирована: %s", self._db_path)
 

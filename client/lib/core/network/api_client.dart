@@ -775,6 +775,109 @@ class ApiClient {
     }
   }
 
+  /// [POST /users/me/live-geo] — записать точку лайв-геолокации (требует активного support-access).
+  Future<void> postMyLiveGeo({
+    required double lat,
+    required double lng,
+    double? accuracyM,
+    String? recordedAt,
+  }) async {
+    final uri = _uri('/users/me/live-geo');
+    final body = jsonEncode({
+      'lat': lat,
+      'lng': lng,
+      if (accuracyM != null) 'accuracy_m': accuracyM,
+      if (recordedAt != null) 'recorded_at': recordedAt,
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: body,
+        ),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    }
+  }
+
+  /// [GET /owner/users/{id}/live-geo] — точки лайв-геолокации пользователя (owner).
+  Future<Map<String, dynamic>> ownerUserLiveGeo(
+    int userId, {
+    int limit = 200,
+    String? since,
+  }) async {
+    final uri = _uri('/owner/users/$userId/live-geo', {
+      'limit': '$limit',
+      if (since != null) 'since': since,
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (data is Map<String, dynamic>) return data;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ сервера: ${e.message}');
+    }
+  }
+
+  /// [GET /owner/server-chats/{chat_id}/messages] — read-only история любого чата для owner.
+  Future<List<dynamic>> ownerServerChatMessages(
+    int chatId, {
+    int limit = 100,
+    int? beforeId,
+  }) async {
+    final uri = _uri('/owner/server-chats/$chatId/messages', {
+      'limit': '$limit',
+      if (beforeId != null) 'before_id': '$beforeId',
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (data is Map) {
+        final inner = data['data'];
+        if (inner is List<dynamic>) return inner;
+      }
+      if (data is List<dynamic>) return data;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ сервера: ${e.message}');
+    }
+  }
+
   /// GET `/` на базовом URL (без /auth и т.д.).
   Future<Map<String, dynamic>> fetchRootHealth() async {
     final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');

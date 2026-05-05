@@ -150,6 +150,7 @@ class _OwnerChatsTabState extends State<OwnerChatsTab> {
                     builder: (_) => OwnerHiddenModerationScreen(
                       chatId: '$id',
                       chatTitle: title,
+                      apiClient: widget.apiClient,
                       onJoinAsParticipant: widget.onJoinAsParticipant,
                     ),
                   ),

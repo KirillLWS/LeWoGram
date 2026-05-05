@@ -115,6 +115,24 @@ async def transfer_owner(
     return {"ok": True}
 
 
+async def list_chat_messages_for_owner(
+    db: Database,
+    chat_id: int,
+    *,
+    limit: int = 100,
+    before_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Сообщения любого чата (read-only) — для скрытой модерации владельцем."""
+    chat = await db.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Чат не найден",
+        )
+    rows = await db.get_messages(chat_id, limit=limit, before_id=before_id)
+    return [dict(r) for r in rows]
+
+
 async def list_server_chats(
     db: Database,
     *,

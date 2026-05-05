@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/device/support_telemetry.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
@@ -365,30 +366,59 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     try {
       final state = await widget.apiClient.getMySupportAccess();
       if (!mounted) return false;
-      if (state['active'] == true) return true;
+      if (state['active'] == true) {
+        // Уже активен — отдельно предложим включить лайв-гео, если ещё не запущена.
+        await _maybeOfferLiveGeo(state['expires_at']?.toString());
+        return true;
+      }
+      bool allowLiveGeo = false;
       final allow = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Включить доступ поддержке'),
-          content: const Text(
-            'Для отправки расширенной диагностики нужен временный доступ на 30 минут. '
-            'Его можно отключить сразу после отправки.',
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('Включить доступ поддержке'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Для отправки расширенной диагностики нужен временный доступ '
+                  'на 30 минут. Его можно отключить сразу после отправки.',
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: allowLiveGeo,
+                  onChanged: (v) =>
+                      setSt(() => allowLiveGeo = v ?? false),
+                  title: const Text('Лайв-геолокация для владельца'),
+                  subtitle: const Text(
+                    'Координаты будут отправляться примерно раз в 15 секунд '
+                    'в течение действия доступа поддержки. Видит только владелец.',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Включить'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Включить'),
-            ),
-          ],
         ),
       );
       if (allow != true || !mounted) return false;
-      await widget.apiClient.grantMySupportAccess(minutes: 30);
+      final granted = await widget.apiClient.grantMySupportAccess(minutes: 30);
       if (!mounted) return false;
+      if (allowLiveGeo) {
+        _startLiveGeoFromExpiresAt(granted['expires_at']?.toString());
+      }
       return true;
     } on ApiException catch (e) {
       if (!mounted) return false;
@@ -402,8 +432,44 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     }
   }
 
+  void _startLiveGeoFromExpiresAt(String? expiresAtIso) {
+    if (expiresAtIso == null || expiresAtIso.isEmpty) return;
+    final until = DateTime.tryParse(expiresAtIso);
+    if (until == null) return;
+    AppScope.of(context).liveGeoStreamer.start(until: until.toUtc());
+  }
+
+  Future<void> _maybeOfferLiveGeo(String? expiresAtIso) async {
+    final streamer = AppScope.of(context).liveGeoStreamer;
+    if (streamer.isRunning) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Включить лайв-геолокацию?'),
+        content: const Text(
+          'Доступ поддержки уже активен. Можно дополнительно включить отправку '
+          'координат владельцу (примерно раз в 15 секунд) до окончания доступа.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Не сейчас'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Включить'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      _startLiveGeoFromExpiresAt(expiresAtIso);
+    }
+  }
+
   Future<void> _revokeSupportAccessNow() async {
     try {
+      AppScope.of(context).liveGeoStreamer.stop();
       await widget.apiClient.revokeMySupportAccess();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

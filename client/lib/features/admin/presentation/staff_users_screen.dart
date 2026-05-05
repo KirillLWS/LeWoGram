@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/storage/account_storage.dart';
+import 'package:lewogram_client/features/owner/presentation/owner_user_live_geo_screen.dart';
 
 /// Список всех пользователей (без оболочки [Scaffold]) — для вкладки владельца или экрана админа.
 class StaffUsersListView extends StatefulWidget {
@@ -667,6 +668,24 @@ class _StaffUserDetailScreenState extends State<StaffUserDetailScreen> {
               ),
             ),
           ),
+          if (_actorIsOwner) ...[
+            const SizedBox(height: 16),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => OwnerUserLiveGeoScreen(
+                      apiClient: AppScope.of(context).apiClient,
+                      userId: _id,
+                      displayLabel: login,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.my_location_outlined),
+              label: const Text('Лайв-геолокация'),
+            ),
+          ],
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: _busy ? null : _banPermanent,

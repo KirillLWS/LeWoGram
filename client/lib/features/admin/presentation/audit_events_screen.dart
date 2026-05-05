@@ -1,8 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/features/admin/presentation/log_entry_tile.dart';
 
 /// Журнал аудита ([GET /admin/audit/events]) — chief_admin / owner.
 class AuditEventsScreen extends StatefulWidget {
@@ -133,39 +132,15 @@ class _AuditEventsScreenState extends State<AuditEventsScreen> {
                           final et = r['event_type']?.toString() ?? '';
                           final ca = r['created_at']?.toString() ?? '';
                           final payload = r['payload'];
-                          final payloadStr = payload is Map
-                              ? const JsonEncoder.withIndent('  ')
-                                  .convert(payload)
-                              : payload?.toString() ?? '';
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '#$id · $et',
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                      color: theme.colorScheme.primary,
-                                    ),
-                                  ),
-                                  Text(
-                                    'user_id: $uid · actor_id: $aid',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                  if (ca.isNotEmpty)
-                                    Text(ca, style: theme.textTheme.bodySmall),
-                                  const SizedBox(height: 8),
-                                  SelectableText(
-                                    payloadStr,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      fontFamily: 'monospace',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                          final subtitleParts = <String>[
+                            'user_id: $uid · actor_id: $aid',
+                            if (ca.isNotEmpty) ca,
+                          ];
+                          return LogEntryTile(
+                            title: '#$id · $et',
+                            subtitle: subtitleParts.join(' · '),
+                            summary: LogEntryTile.detailsToOneLine(payload),
+                            details: payload,
                           );
                         },
                       ),

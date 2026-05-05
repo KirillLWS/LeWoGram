@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/features/owner/presentation/owner_user_live_geo_screen.dart';
 
 /// Карточка пользователя (заглушка): действия только через колбэки — API подключит координатор.
 class OwnerUserDetailScreen extends StatelessWidget {
@@ -6,6 +8,7 @@ class OwnerUserDetailScreen extends StatelessWidget {
     super.key,
     required this.userId,
     required this.displayLabel,
+    this.apiClient,
     this.onGrantRole,
     this.onOpenHiddenChat,
     this.onRevokeRole,
@@ -13,6 +16,7 @@ class OwnerUserDetailScreen extends StatelessWidget {
 
   final String userId;
   final String displayLabel;
+  final ApiClient? apiClient;
 
   final void Function(String userId, String role)? onGrantRole;
   final void Function(String userId)? onOpenHiddenChat;
@@ -62,6 +66,25 @@ class OwnerUserDetailScreen extends StatelessWidget {
                         : () => onOpenHiddenChat!(userId),
                     icon: const Icon(Icons.visibility_off_outlined),
                     label: const Text('Скрытый чат модерации'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: apiClient == null
+                        ? null
+                        : () {
+                            final uid = int.tryParse(userId) ?? 0;
+                            Navigator.of(context).push<void>(
+                              MaterialPageRoute<void>(
+                                builder: (_) => OwnerUserLiveGeoScreen(
+                                  apiClient: apiClient!,
+                                  userId: uid,
+                                  displayLabel: displayLabel,
+                                ),
+                              ),
+                            );
+                          },
+                    icon: const Icon(Icons.my_location_outlined),
+                    label: const Text('Лайв-геолокация'),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(

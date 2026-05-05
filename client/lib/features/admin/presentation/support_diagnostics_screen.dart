@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/features/admin/presentation/log_entry_tile.dart';
 
 /// Журнал диагностики пользователей ([GET /admin/support/diagnostics]).
 class SupportDiagnosticsScreen extends StatefulWidget {
@@ -130,38 +131,16 @@ class _SupportDiagnosticsScreenState extends State<SupportDiagnosticsScreen> {
                           final body = r['body']?.toString() ?? '';
                           final meta = r['client_meta']?.toString();
                           final ca = r['created_at']?.toString() ?? '';
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '#$id · user $uid · $login',
-                                    style:
-                                        theme.textTheme.labelMedium?.copyWith(
-                                      color: theme.colorScheme.primary,
-                                    ),
-                                  ),
-                                  if (ca.isNotEmpty)
-                                    Text(ca, style: theme.textTheme.bodySmall),
-                                  const SizedBox(height: 8),
-                                  SelectableText(body),
-                                  if (meta != null && meta.isNotEmpty) ...[
-                                    const SizedBox(height: 8),
-                                    Text('meta:',
-                                        style: theme.textTheme.labelSmall),
-                                    SelectableText(
-                                      meta,
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
+                          final hasMeta = meta != null && meta.trim().isNotEmpty;
+                          final details = <String, Object?>{
+                            if (body.isNotEmpty) 'body': body,
+                            if (hasMeta) 'client_meta': meta,
+                          };
+                          return LogEntryTile(
+                            title: '#$id · user $uid · $login',
+                            subtitle: ca,
+                            summary: LogEntryTile.detailsToOneLine(body),
+                            details: details.isEmpty ? null : details,
                           );
                         },
                       ),
