@@ -1,0 +1,19 @@
+# Корень репозитория LeWoGram.
+# Python: __pycache__, venv, .env
+# Сервер: файл БД и загруженные медиа (пути в data/)
+# Flutter: build/, .dart_tool/
+
+server/.env
+server/**/__pycache__/
+server/.venv/
+server/venv/
+server/data/db/*.db
+server/data/db/*.db-journal
+server/data/media/*
+!server/data/media/.gitkeep
+server/data/backups/*
+!server/data/backups/.gitkeep
+
+client/.dart_tool/
+client/build/
+client/.flutter-plugins-dependencies
