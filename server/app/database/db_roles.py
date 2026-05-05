@@ -14,6 +14,32 @@ import aiosqlite
 ALL_ROLES: tuple[str, ...] = ("user", "admin", "chief_admin", "developer", "owner")
 VALID_ROLES: frozenset[str] = frozenset(ALL_ROLES)
 
+# Операционный персонал: инвайты, смена устройства и т.п. Иерархия прав: owner ≥ chief_admin ≥ admin ≥ user.
+OPERATIONAL_STAFF_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "admin"})
+
+
+def rbac_granted_intersects_required(
+    granted_roles: frozenset[str] | set[str] | list[str] | tuple[str, ...],
+    required_roles: frozenset[str],
+) -> bool:
+    """
+    Синхронная проверка пересечения ролей.
+
+    Использовать ТОЛЬКО для множеств, полученных из БД (например list_user_roles),
+    никогда из JWT/тела запроса/клиентского JSON.
+    """
+    return bool(set(granted_roles) & required_roles)
+
+
+async def rbac_user_has_any_role(
+    db_path: Path,
+    user_id: int,
+    required_roles: frozenset[str],
+) -> bool:
+    """Проверка доступа по user_roles в БД — основной async-entrypoint для RBAC."""
+    granted = await list_user_roles(db_path, user_id)
+    return rbac_granted_intersects_required(granted, required_roles)
+
 
 def hash_initial_owner_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -30,6 +30,7 @@ class ChatItem {
     this.avatarPath,
     this.peerLogin,
     this.peerDisplayName,
+    this.peerUserId,
     this.lastMessageText,
     this.lastMessageCreatedAt,
     required this.unreadCount,
@@ -50,6 +51,10 @@ class ChatItem {
   final String? avatarPath;
   final String? peerLogin;
   final String? peerDisplayName;
+
+  /// Собеседник в direct-чате ([peer_user_id] в JSON); для групп — null.
+  final int? peerUserId;
+
   final String? lastMessageText;
   final String? lastMessageCreatedAt;
   final int unreadCount;
@@ -61,10 +66,13 @@ class ChatItem {
         ? rawDisplayTitle
         : rawDisplayTitle?.toString();
 
-    final rawAvatar = json['avatar_path'];
+    final rawAvatar = json['avatar_url'] ?? json['avatar_path'];
     final avatarPath = rawAvatar is String
         ? rawAvatar
         : rawAvatar?.toString();
+
+    final rawPeerId = json['peer_user_id'];
+    final peerUserId = rawPeerId is num ? rawPeerId.toInt() : null;
 
     return ChatItem(
       id: (json['id'] as num).toInt(),
@@ -75,6 +83,7 @@ class ChatItem {
       avatarPath: avatarPath,
       peerLogin: json['peer_login'] as String?,
       peerDisplayName: json['peer_display_name'] as String?,
+      peerUserId: peerUserId,
       lastMessageText: json['last_message_text'] as String?,
       lastMessageCreatedAt: json['last_message_created_at'] as String?,
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,

@@ -173,6 +173,8 @@ class _ChatListScreenState extends State<ChatListScreen> with AutoRefreshMixin {
                     builder: (ctx) => ChatScreen(
                       chatId: c.id,
                       apiClient: widget.apiClient,
+                      chatType: c.type,
+                      peerUserId: c.peerUserId,
                       initialDisplayTitle: c.displayTitle,
                       initialTitle: c.title,
                       initialAvatarPath: c.avatarPath,

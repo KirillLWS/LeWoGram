@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 
-/// Управление инвайтами (только owner / chief_admin на backend).
+/// Управление инвайтами (роли owner / chief_admin / admin на backend).
 class InvitesScreen extends StatefulWidget {
   const InvitesScreen({
     super.key,

@@ -4,9 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lewogram_client/app/app_scope.dart';
-import 'package:lewogram_client/core/config/app_config.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/permissions/permissions_service.dart';
+import 'package:lewogram_client/core/permissions/role_access.dart';
 import 'package:lewogram_client/core/push/push_service.dart';
 import 'package:lewogram_client/core/storage/account_storage.dart';
 import 'package:lewogram_client/features/admin/presentation/admin_hub_screen.dart';
@@ -19,10 +19,6 @@ import 'package:lewogram_client/features/profile/presentation/profile_screen.dar
 import 'package:lewogram_client/features/users/data/user_public_profile.dart';
 import 'package:lewogram_client/features/users/data/user_search_result.dart';
 import 'package:lewogram_client/features/users/presentation/user_search_screen.dart';
-
-bool _canManageInvites(List<String> roles) {
-  return roles.contains('owner') || roles.contains('chief_admin');
-}
 
 List<String> _parseRolesFromMe(Map<String, dynamic> m) {
   final r = m['roles'];
@@ -111,6 +107,8 @@ class _HomeShellState extends State<HomeShell> {
                         builder: (_) => ChatScreen(
                           chatId: chatId,
                           apiClient: api,
+                          chatType: 'direct',
+                          peerUserId: otherId,
                         ),
                       ),
                     );
@@ -154,20 +152,12 @@ class _HomeShellState extends State<HomeShell> {
               return List<String>.from(_roles);
             }
           },
-          invitesEligibility: _canManageInvites,
+          invitesEligibility: RoleAccess.canManageInvitesAndDeviceTransfers,
           onOpenInvites: () {
             Navigator.of(context).pushNamed('/invites');
           },
           onOpenDeviceTransferPending: () {
             Navigator.of(context).pushNamed('/device-transfers-admin');
-          },
-          resolveAvatarUrl: (user) {
-            final u = user.avatarUrl?.trim();
-            if (u == null || u.isEmpty) return null;
-            if (u.startsWith('http://') || u.startsWith('https://')) return u;
-            final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
-            final path = u.startsWith('/') ? u.substring(1) : u;
-            return Uri.parse('$base/$path').toString();
           },
           onPickAvatar: () async {
             final messenger = ScaffoldMessenger.of(context);
@@ -230,25 +220,21 @@ class _HomeShellState extends State<HomeShell> {
         icon: Icons.admin_panel_settings_outlined,
         selectedIcon: Icons.admin_panel_settings,
         label: 'Админ',
-        visibleFor: (roles) =>
-            roles.contains('owner') ||
-            roles.contains('chief_admin') ||
-            roles.contains('admin'),
+        visibleFor: RoleAccess.canOpenAdminHub,
         builder: () => const AdminHubScreen(),
       ),
       _NavTab(
         icon: Icons.verified_user_outlined,
         selectedIcon: Icons.verified_user,
         label: 'Владелец',
-        visibleFor: (roles) => roles.contains('owner'),
+        visibleFor: RoleAccess.canOpenOwnerHub,
         builder: () => const OwnerHubScreen(),
       ),
       _NavTab(
         icon: Icons.developer_mode_outlined,
         selectedIcon: Icons.developer_mode,
         label: 'Разработка',
-        visibleFor: (roles) =>
-            roles.contains('developer') || roles.contains('owner'),
+        visibleFor: RoleAccess.canOpenDeveloperHub,
         builder: () => const DeveloperHubScreen(),
       ),
     ];
@@ -364,23 +350,29 @@ class _HomeShellState extends State<HomeShell> {
         index: safeIndex,
         children: _cachedPages!,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: safeIndex,
-        onDestinationSelected: (i) {
-          setState(() => _index = i);
-          if (i < tabs.length && tabs[i].label == 'Друзья') {
-            unawaited(_syncIncomingCount(api));
-          }
-        },
-        destinations: [
-          for (final t in tabs)
-            NavigationDestination(
-              icon: t.label == 'Друзья' ? _badgedNavIcon(t.icon) : Icon(t.icon),
-              selectedIcon:
-                  t.label == 'Друзья' ? _badgedNavIcon(t.selectedIcon) : Icon(t.selectedIcon),
-              label: t.label,
-            ),
-        ],
+      bottomNavigationBar: DefaultTextStyle.merge(
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        child: NavigationBar(
+          selectedIndex: safeIndex,
+          onDestinationSelected: (i) {
+            setState(() => _index = i);
+            if (i < tabs.length && tabs[i].label == 'Друзья') {
+              unawaited(_syncIncomingCount(api));
+            }
+          },
+          destinations: [
+            for (final t in tabs)
+              NavigationDestination(
+                icon: t.label == 'Друзья' ? _badgedNavIcon(t.icon) : Icon(t.icon),
+                selectedIcon:
+                    t.label == 'Друзья' ? _badgedNavIcon(t.selectedIcon) : Icon(t.selectedIcon),
+                label: t.label,
+              ),
+          ],
+        ),
       ),
     );
   }

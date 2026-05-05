@@ -6,6 +6,7 @@ class ProfileUser {
     this.displayName,
     this.about,
     this.avatarUrl,
+    this.avatarExists,
     String? username,
   }) : _usernameField = username;
 
@@ -14,8 +15,11 @@ class ProfileUser {
   final String? displayName;
   final String? about;
 
-  /// URL или локальный путь к аватару (если бэкенд отдаёт относительный путь — подставляет координатор).
+  /// URL или относительный путь к аватару ([avatar_path] / [avatar_url] из API).
   final String? avatarUrl;
+
+  /// Из API ([avatar_exists]): `false` — файла нет, не грузить по старому пути.
+  final bool? avatarExists;
 
   final String? _usernameField;
 
@@ -37,12 +41,23 @@ class ProfileUser {
     final aboutRaw = json['about'];
     final unameRaw = json['username'];
     final uname = unameRaw is String ? unameRaw.trim() : null;
+    final existsRaw = json['avatar_exists'];
+    bool? avatarExists;
+    if (existsRaw is bool) {
+      avatarExists = existsRaw;
+    } else if (existsRaw is num) {
+      avatarExists = existsRaw != 0;
+    }
+
     return ProfileUser(
       id: (json['id'] as num?)?.toInt() ?? 0,
       login: json['login'] as String,
       displayName: json['display_name'] as String?,
       about: aboutRaw is String ? aboutRaw : null,
-      avatarUrl: _readOptionalString(json['avatar_url']) ?? _readOptionalString(json['avatar']),
+      avatarUrl: _readOptionalString(json['avatar_url']) ??
+          _readOptionalString(json['avatar_path']) ??
+          _readOptionalString(json['avatar']),
+      avatarExists: avatarExists,
       username: uname != null && uname.isNotEmpty ? uname : null,
     );
   }

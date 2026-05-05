@@ -9,6 +9,7 @@ from fastapi import HTTPException, UploadFile, status
 
 import aiosqlite
 
+from app.avatar_fields import apply_avatar_fields
 from app.config.config import AVATAR_MAX_BYTES, USER_ABOUT_MAX_LEN, media_dir
 from app.database.database import Database
 from app.users.schemas import PatchUserMeRequest, UserMeResponse, UserPublicResponse, UserSearchResult
@@ -69,13 +70,17 @@ async def _me_response(db: Database, user: dict[str, Any]) -> UserMeResponse:
     un = user.get("username")
     username = str(un).strip() if un is not None and str(un).strip() else login
     roles = await db.list_user_roles(uid)
+    u = dict(user)
+    apply_avatar_fields(u)
     return UserMeResponse(
         id=uid,
         login=login,
         username=username,
         display_name=user.get("display_name"),
         about=str(user.get("about") or ""),
-        avatar_path=user.get("avatar_path"),
+        avatar_path=u.get("avatar_path"),
+        avatar_url=u.get("avatar_url"),
+        avatar_exists=bool(u.get("avatar_exists")),
         roles=roles,
     )
 
@@ -148,7 +153,12 @@ async def search_users(db: Database, current_user_id: int, q: str) -> list[UserS
             detail="Параметр q не может быть пустым",
         )
     rows = await db.search_users(term, current_user_id, limit=50)
-    return [UserSearchResult.model_validate(r) for r in rows]
+    out: list[UserSearchResult] = []
+    for r in rows:
+        d = dict(r)
+        apply_avatar_fields(d)
+        out.append(UserSearchResult.model_validate(d))
+    return out
 
 
 async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> UserPublicResponse:
@@ -156,6 +166,7 @@ async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> User
     if row is None or int(row.get("is_blocked", 0)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
     d = {k: row[k] for k in ("id", "username", "display_name", "about", "avatar_path")}
+    apply_avatar_fields(d)
     st = await get_status_response(db, viewer_id, user_id)
     d["relation_to_me"] = st.relation
     d["friend_request_id"] = st.request_id

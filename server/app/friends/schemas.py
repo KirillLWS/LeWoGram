@@ -27,6 +27,8 @@ class FriendUserSnippet(BaseModel):
     username: str | None = None
     display_name: str | None = None
     avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False
 
 
 class FriendRequestItem(BaseModel):

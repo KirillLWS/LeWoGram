@@ -11,6 +11,7 @@ from typing import Any
 import aiosqlite
 from fastapi import HTTPException, status
 
+from app.avatar_fields import apply_avatar_fields
 from app.database.database import Database
 from app.friends.schemas import (
     FriendRequestItem,
@@ -77,11 +78,14 @@ async def _user_snippet(db_path: Path, user_id: int) -> FriendUserSnippet | None
     if row is None:
         return None
     d = _row_to_dict(row)
+    apply_avatar_fields(d)
     return FriendUserSnippet(
         id=int(d["id"]),
         username=d.get("username"),
         display_name=d.get("display_name"),
         avatar_path=d.get("avatar_path"),
+        avatar_url=d.get("avatar_url"),
+        avatar_exists=bool(d.get("avatar_exists")),
     )
 
 
@@ -185,7 +189,7 @@ class FriendsService:
                 await self._notify_friendship_push("request", out)
                 return out
 
-            await conn.execute(
+            cur = await conn.execute(
                 """
                 INSERT INTO friendships (from_user_id, to_user_id, status)
                 VALUES (?, ?, ?)
@@ -193,7 +197,7 @@ class FriendsService:
                 (from_user_id, to_user_id, _ST_PENDING),
             )
             await conn.commit()
-            fid = int(conn.lastrowid)
+            fid = int(cur.lastrowid)
             out = await self._get_friendship_by_id(conn, fid)
         await self._notify_friendship_push("request", out)
         return out
@@ -413,7 +417,12 @@ class FriendsService:
                 (user_id, _ST_ACCEPTED, user_id, user_id, lim),
             ) as cur:
                 rows = await cur.fetchall()
-        return [FriendUserSnippet.model_validate(_row_to_dict(r)) for r in rows]
+        out_snippets: list[FriendUserSnippet] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            apply_avatar_fields(d)
+            out_snippets.append(FriendUserSnippet.model_validate(d))
+        return out_snippets
 
     async def list_incoming(self, user_id: int) -> list[FriendRequestItem]:
         async with aiosqlite.connect(self._path) as conn:
@@ -434,15 +443,17 @@ class FriendsService:
         out: list[FriendRequestItem] = []
         for r in rows:
             d = _row_to_dict(r)
+            sn = {
+                "id": int(d["peer_id"]),
+                "username": d.get("username"),
+                "display_name": d.get("display_name"),
+                "avatar_path": d.get("avatar_path"),
+            }
+            apply_avatar_fields(sn)
             out.append(
                 FriendRequestItem(
                     request_id=int(d["request_id"]),
-                    user=FriendUserSnippet(
-                        id=int(d["peer_id"]),
-                        username=d.get("username"),
-                        display_name=d.get("display_name"),
-                        avatar_path=d.get("avatar_path"),
-                    ),
+                    user=FriendUserSnippet.model_validate(sn),
                 )
             )
         return out
@@ -466,15 +477,17 @@ class FriendsService:
         out: list[FriendRequestItem] = []
         for r in rows:
             d = _row_to_dict(r)
+            sn = {
+                "id": int(d["peer_id"]),
+                "username": d.get("username"),
+                "display_name": d.get("display_name"),
+                "avatar_path": d.get("avatar_path"),
+            }
+            apply_avatar_fields(sn)
             out.append(
                 FriendRequestItem(
                     request_id=int(d["request_id"]),
-                    user=FriendUserSnippet(
-                        id=int(d["peer_id"]),
-                        username=d.get("username"),
-                        display_name=d.get("display_name"),
-                        avatar_path=d.get("avatar_path"),
-                    ),
+                    user=FriendUserSnippet.model_validate(sn),
                 )
             )
         return out

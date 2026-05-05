@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -18,6 +19,7 @@ from app.device_transfer.schemas import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _client_ip(request: Request) -> str | None:
@@ -69,9 +71,28 @@ async def get_admin_overview(
     user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, Any]:
-    """Ожидающие заявки и история (owner / chief_admin), без poll-токенов."""
+    """Ожидающие заявки и история (операционный персонал), без poll-токенов."""
     uid = int(user["id"])
-    return await dtr_service.admin_overview(db, uid)
+    logger.info("device_transfer GET /admin-overview start actor_id=%s", uid)
+    try:
+        out = await dtr_service.admin_overview(db, uid)
+        pending = out.get("pending")
+        history = out.get("history")
+        n_p = len(pending) if isinstance(pending, list) else 0
+        n_h = len(history) if isinstance(history, list) else 0
+        logger.info(
+            "device_transfer GET /admin-overview ok actor_id=%s pending=%s history=%s",
+            uid,
+            n_p,
+            n_h,
+        )
+        return out
+    except Exception:
+        logger.exception(
+            "device_transfer GET /admin-overview failed actor_id=%s",
+            uid,
+        )
+        raise
 
 
 @router.post("/{request_id}/approve")

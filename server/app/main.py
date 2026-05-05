@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.admin.invites_router import router as admin_invites_router
 from app.admin.roles_router import router as admin_roles_router
+from app.admin.users_moderation_router import router as admin_users_moderation_router
 from app.auth.router import router as auth_router
 from app.config import BACKUP_PATH, DATABASE_PATH, MEDIA_PATH
 from app.device_transfer.router import router as device_transfer_router
@@ -78,6 +79,7 @@ app.include_router(push_router, prefix="/push")
 app.include_router(owner_router, prefix="/owner")
 app.include_router(admin_roles_router, prefix="/admin")
 app.include_router(admin_invites_router, prefix="/admin")
+app.include_router(admin_users_moderation_router, prefix="/admin")
 
 _media_root = (_SERVER_ROOT / MEDIA_PATH).resolve()
 _media_root.mkdir(parents=True, exist_ok=True)

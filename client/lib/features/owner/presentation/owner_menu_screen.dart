@@ -4,22 +4,13 @@ import 'package:lewogram_client/features/owner/presentation/owner_chats_tab.dart
 import 'package:lewogram_client/features/owner/presentation/owner_users_tab.dart';
 import 'package:lewogram_client/features/owner/presentation/transfer_ownership_dialog.dart';
 
-/// Меню владельца: вкладки «Пользователи» и «Чаты». Видимость задаёт координатор.
-///
-/// Колбэки опциональны: без них соответствующие кнопки отключены.
+/// Меню владельца: вкладки «Пользователи» и «Чаты».
 class OwnerMenuScreen extends StatefulWidget {
   const OwnerMenuScreen({
     super.key,
-    this.onGrantRole,
-    this.onOpenHiddenChat,
-    this.onRevokeRole,
     this.onJoinChatAsParticipant,
     this.onTransferOwnership,
   });
-
-  final void Function(String userId, String role)? onGrantRole;
-  final void Function(String userId)? onOpenHiddenChat;
-  final void Function(String userId)? onRevokeRole;
 
   /// Вступить в чат как обычный участник (отдельно от режима модерации).
   final void Function(String chatId)? onJoinChatAsParticipant;
@@ -85,11 +76,7 @@ class _OwnerMenuScreenState extends State<OwnerMenuScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          OwnerUsersTab(
-            onGrantRole: widget.onGrantRole,
-            onOpenHiddenChat: widget.onOpenHiddenChat,
-            onRevokeRole: widget.onRevokeRole,
-          ),
+          const OwnerUsersTab(),
           OwnerChatsTab(
             onJoinAsParticipant: widget.onJoinChatAsParticipant,
           ),

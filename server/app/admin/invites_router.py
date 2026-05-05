@@ -1,5 +1,5 @@
 """
-Маршруты инвайтов: POST/GET /admin/invites (только owner и chief_admin).
+Маршруты инвайтов: POST/GET /admin/invites (owner, chief_admin, admin — OPERATIONAL_STAFF_ROLES).
 """
 
 from __future__ import annotations

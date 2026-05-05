@@ -73,7 +73,14 @@ async def rotate_refresh_session(
                 WHERE s.refresh_token_hash = ?
                   AND s.revoked_at IS NULL
                   AND s.expires_at > datetime('now')
-                  AND u.is_blocked = 0
+                  AND NOT (
+                    COALESCE(NULLIF(TRIM(u.account_status), ''), CASE WHEN u.is_blocked = 1 THEN 'banned' ELSE 'active' END) = 'banned'
+                    OR (
+                      COALESCE(NULLIF(TRIM(u.account_status), ''), 'active') = 'temp_banned'
+                      AND u.ban_until IS NOT NULL AND TRIM(u.ban_until) != ''
+                      AND datetime(u.ban_until) > datetime('now')
+                    )
+                  )
                 """,
                 (old_refresh_hash,),
             ) as cur:
@@ -85,6 +92,23 @@ async def rotate_refresh_session(
             sid = int(row["id"])
             uid = int(row["user_id"])
             login = str(row["user_login"])
+            await db.execute(
+                """
+                UPDATE users
+                SET account_status = 'active',
+                    is_blocked = 0,
+                    ban_until = NULL,
+                    ban_reason = '',
+                    staff_ban = 0
+                WHERE id = ?
+                  AND account_status = 'temp_banned'
+                  AND (
+                        ban_until IS NULL OR TRIM(ban_until) = ''
+                        OR datetime(ban_until) <= datetime('now')
+                  )
+                """,
+                (uid,),
+            )
             fp = str(row["device_fingerprint"])
             dmodel = row["device_model"]
             dos = row["device_os"]
@@ -123,6 +147,39 @@ async def rotate_refresh_session(
         except Exception:
             await db.rollback()
             raise
+
+
+async def find_blocked_user_for_valid_refresh(
+    db_path: Path,
+    old_refresh_hash: str,
+) -> dict[str, Any] | None:
+    """
+    Активная сессия по refresh есть, но аккаунт заблокирован (perm или temp до ban_until).
+    """
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT u.*
+            FROM auth_sessions s
+            INNER JOIN users u ON u.id = s.user_id
+            WHERE s.refresh_token_hash = ?
+              AND s.revoked_at IS NULL
+              AND s.expires_at > datetime('now')
+              AND (
+                COALESCE(NULLIF(TRIM(u.account_status), ''), CASE WHEN u.is_blocked = 1 THEN 'banned' ELSE 'active' END) = 'banned'
+                OR (
+                  COALESCE(NULLIF(TRIM(u.account_status), ''), 'active') = 'temp_banned'
+                  AND u.ban_until IS NOT NULL AND TRIM(u.ban_until) != ''
+                  AND datetime(u.ban_until) > datetime('now')
+                )
+              )
+            LIMIT 1
+            """,
+            (old_refresh_hash,),
+        ) as cur:
+            row = await cur.fetchone()
+    return _row_to_dict(row) if row else None
 
 
 async def revoke_session_by_id(db_path: Path, session_id: int, user_id: int) -> bool:

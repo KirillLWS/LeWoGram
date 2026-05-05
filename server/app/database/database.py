@@ -64,6 +64,9 @@ class Database:
         from app.database.device_transfer_migrations import apply_device_transfer_migrations
 
         await apply_device_transfer_migrations(self._db_path)
+        from app.database.user_moderation_migrations import apply_user_moderation_migrations
+
+        await apply_user_moderation_migrations(self._db_path)
         logger.info("База инициализирована: %s", self._db_path)
 
     async def _migrate_users_username(self) -> None:
@@ -149,10 +152,148 @@ class Database:
                 row = await cur.fetchone()
         return _row_to_dict(row) if row else None
 
+    async def clear_expired_temp_ban(self, user_id: int) -> None:
+        """Снимает истёкший temp_banned (включая staff-временную блокировку)."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                """
+                UPDATE users
+                SET account_status = 'active',
+                    is_blocked = 0,
+                    ban_until = NULL,
+                    ban_reason = '',
+                    staff_ban = 0
+                WHERE id = ?
+                  AND account_status = 'temp_banned'
+                  AND (
+                        ban_until IS NULL OR trim(ban_until) = ''
+                        OR datetime(ban_until) <= datetime('now')
+                  )
+                """,
+                (user_id,),
+            )
+            await db.commit()
+
+    async def list_users_for_staff(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        lim = max(1, min(limit, 200))
+        off = max(0, offset)
+        where = "1=1"
+        params: list[Any] = []
+        if query and query.strip():
+            esc = self._escape_like_pattern(query.strip())
+            pat = f"%{esc}%"
+            where = """(
+                login COLLATE NOCASE LIKE ? ESCAPE '\\'
+                OR (username IS NOT NULL AND username COLLATE NOCASE LIKE ? ESCAPE '\\')
+                OR (display_name IS NOT NULL AND display_name COLLATE NOCASE LIKE ? ESCAPE '\\')
+            )"""
+            params.extend([pat, pat, pat])
+        count_sql = f"SELECT COUNT(*) FROM users WHERE {where}"
+        list_sql = f"""
+            SELECT id, login, username, display_name, avatar_path,
+                   account_status, ban_until, ban_reason, staff_ban,
+                   is_blocked, created_at, last_seen_at
+            FROM users
+            WHERE {where}
+            ORDER BY id ASC
+            LIMIT ? OFFSET ?
+        """
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(count_sql, params) as cur:
+                row = await cur.fetchone()
+                total = int(row[0]) if row and row[0] is not None else 0
+            qparams = [*params, lim, off]
+            async with db.execute(list_sql, qparams) as cur:
+                rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows], total
+
+    async def staff_set_perm_ban(self, user_id: int, reason: str) -> None:
+        r = (reason or "").strip()
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                """
+                UPDATE users
+                SET staff_ban = 1,
+                    account_status = 'banned',
+                    is_blocked = 1,
+                    ban_until = NULL,
+                    ban_reason = ?
+                WHERE id = ?
+                """,
+                (r, user_id),
+            )
+            await db.commit()
+
+    async def staff_set_temp_ban(self, user_id: int, reason: str, ban_until_utc: str) -> None:
+        r = (reason or "").strip()
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                """
+                UPDATE users
+                SET staff_ban = 1,
+                    account_status = 'temp_banned',
+                    is_blocked = 1,
+                    ban_until = ?,
+                    ban_reason = ?
+                WHERE id = ?
+                """,
+                (ban_until_utc, r, user_id),
+            )
+            await db.commit()
+
+    async def staff_unban(self, user_id: int) -> None:
+        """Снимает staff-блокировку; при активной санкции ban оставляет аккаунт заблокированным."""
+        import app.database.db_reports as db_reports
+
+        n = await db_reports.count_active_bans_for_user(self, user_id)
+        async with aiosqlite.connect(self._db_path) as db:
+            if n > 0:
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET staff_ban = 0,
+                        account_status = 'banned',
+                        is_blocked = 1,
+                        ban_until = NULL
+                    WHERE id = ?
+                    """,
+                    (user_id,),
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET staff_ban = 0,
+                        account_status = 'active',
+                        is_blocked = 0,
+                        ban_until = NULL,
+                        ban_reason = ''
+                    WHERE id = ?
+                    """,
+                    (user_id,),
+                )
+            await db.commit()
+
     async def list_user_roles(self, user_id: int) -> list[str]:
         from app.database import db_roles
 
         return await db_roles.list_user_roles(self._db_path, user_id)
+
+    async def rbac_user_has_any_role(
+        self, user_id: int, required_roles: frozenset[str]
+    ) -> bool:
+        from app.database import db_roles
+
+        return await db_roles.rbac_user_has_any_role(
+            self._db_path, user_id, required_roles
+        )
 
     async def get_role_change_history(
         self,
@@ -604,6 +745,11 @@ class Database:
             async with db.execute(
                 """
                 SELECT c.*, cm.role AS my_role, cm.can_write AS my_can_write,
+                       (SELECT u.id
+                        FROM chat_members m2
+                        INNER JOIN users u ON u.id = m2.user_id
+                        WHERE m2.chat_id = c.id AND c.type = 'direct' AND m2.user_id != ?
+                        LIMIT 1) AS direct_peer_id,
                        (SELECT u.login
                         FROM chat_members m2
                         INNER JOIN users u ON u.id = m2.user_id
@@ -624,7 +770,7 @@ class Database:
                 WHERE c.is_archived = 0
                 ORDER BY c.updated_at DESC
                 """,
-                (user_id, user_id, user_id, user_id),
+                (user_id, user_id, user_id, user_id, user_id),
             ) as cur:
                 rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]

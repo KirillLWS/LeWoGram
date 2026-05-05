@@ -46,13 +46,16 @@ abstract final class AppThemes {
         shape: RoundedRectangleBorder(borderRadius: r16),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: r12)),
+        style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: r12)),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: r12)),
+        style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: r12)),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: r12)),
+        style: TextButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: r12)),
       ),
     );
   }
@@ -170,6 +173,13 @@ abstract final class AppThemes {
       surfaceContainerLow: _iosBg,
       error: _iosError,
       onError: Colors.white,
+      // [ColorScheme.light] omits these by default; unset errorContainer falls back
+      // to [error], which breaks tonal destructive buttons (red label on red fill).
+      errorContainer: Color.alphaBlend(
+        _iosError.withValues(alpha: 0.14),
+        _iosSurface,
+      ),
+      onErrorContainer: const Color(0xFF930006),
       outline: const Color(0xFFC6C6C8),
       outlineVariant: const Color(0xFFE5E5EA),
     );
@@ -244,7 +254,9 @@ abstract final class AppThemes {
           (s) => TextStyle(
             fontSize: 12,
             letterSpacing: -0.1,
-            fontWeight: s.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
+            fontWeight: s.contains(WidgetState.selected)
+                ? FontWeight.w600
+                : FontWeight.w500,
           ),
         ),
       ),

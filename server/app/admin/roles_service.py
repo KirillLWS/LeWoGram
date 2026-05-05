@@ -1,5 +1,5 @@
 """
-Выдача / отзыв ролей (админка): правила owner vs chief_admin vs остальные роли.
+Выдача / отзыв ролей (админка): owner для owner/chief_admin; операционный персонал для остальных ролей.
 """
 
 from __future__ import annotations
@@ -12,14 +12,15 @@ from app.database.database import Database
 from app.database.db_roles import (
     count_users_with_role,
     grant_role,
+    rbac_granted_intersects_required,
     revoke_role,
     user_has_role,
     VALID_ROLES,
 )
 
 
-READ_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "developer"})
-MUTATE_ROLES: frozenset[str] = frozenset({"owner", "chief_admin"})
+READ_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "admin", "developer"})
+MUTATE_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "admin"})
 
 
 def _actor_roles_set(roles: list[str]) -> set[str]:
@@ -27,7 +28,7 @@ def _actor_roles_set(roles: list[str]) -> set[str]:
 
 
 def _ensure_reader(actor_id: int, actor_roles: list[str]) -> None:
-    if not (_actor_roles_set(actor_roles) & READ_ROLES):
+    if not rbac_granted_intersects_required(actor_roles, READ_ROLES):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Недостаточно прав для просмотра ролей",
@@ -35,7 +36,7 @@ def _ensure_reader(actor_id: int, actor_roles: list[str]) -> None:
 
 
 def _ensure_mutator(actor_id: int, actor_roles: list[str]) -> None:
-    if not (_actor_roles_set(actor_roles) & MUTATE_ROLES):
+    if not rbac_granted_intersects_required(actor_roles, MUTATE_ROLES):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Недостаточно прав для изменения ролей",
@@ -47,7 +48,7 @@ def _can_grant(actor_roles: set[str], role: str) -> bool:
         return False
     if role in ("owner", "chief_admin"):
         return "owner" in actor_roles
-    return bool(actor_roles & MUTATE_ROLES)
+    return rbac_granted_intersects_required(actor_roles, MUTATE_ROLES)
 
 
 def _can_revoke(actor_roles: set[str], role: str) -> bool:
@@ -57,7 +58,7 @@ def _can_revoke(actor_roles: set[str], role: str) -> bool:
         return "owner" in actor_roles
     if role == "chief_admin":
         return "owner" in actor_roles
-    return bool(actor_roles & MUTATE_ROLES)
+    return rbac_granted_intersects_required(actor_roles, MUTATE_ROLES)
 
 
 async def get_user_roles_list(

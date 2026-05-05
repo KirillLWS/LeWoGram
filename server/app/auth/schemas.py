@@ -80,6 +80,7 @@ class UserResponse(BaseModel):
 
     id: int
     login: str
+    username: str | None = None
     display_name: str | None = None
     about: str = ""
     is_online: bool = False
@@ -87,6 +88,12 @@ class UserResponse(BaseModel):
     last_seen_at: str | None = None
     must_change_password: bool = False
     roles: list[str] = Field(default_factory=list)
+    account_status: str = "active"
+    ban_until: str | None = None
+    ban_reason: str = ""
+    avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False
 
 
 class ChangePasswordRequest(BaseModel):

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'package:lewogram_client/app/app_scope.dart';
+import 'package:lewogram_client/core/network/account_banned_exception.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/onboarding/onboarding_prefs.dart';
 import 'package:lewogram_client/core/storage/account_storage.dart';
+import 'package:lewogram_client/features/auth/presentation/account_banned_dialog.dart';
 
 /// Заставка: проверка токена и маршрут на вход или домашнюю оболочку.
 class SessionGate extends StatefulWidget {
@@ -42,6 +44,13 @@ class _SessionGateState extends State<SessionGate> {
       } else {
         nav.pushReplacementNamed('/home');
       }
+    } on AccountBannedException catch (e) {
+      if (!mounted) return;
+      await scope.tokenStorage.clearToken();
+      if (!mounted) return;
+      await showAccountBannedDialog(context, e);
+      if (!mounted) return;
+      nav.pushReplacementNamed('/login');
     } on UnauthorizedException catch (_) {
       if (!mounted) return;
       await scope.tokenStorage.clearToken();

@@ -27,24 +27,31 @@ async def apply_reports_schema_fragment(db_path: Path) -> None:
     logger.debug("reports schema fragment applied")
 
 
-async def migrate_users_system_role(db_path: Path) -> None:
+async def migrate_drop_legacy_system_role(db_path: Path) -> None:
     """
-    Добавляет users.system_role для проверки прав модерации (идемпотентно).
-    Значения: user | admin | chief_admin | owner (и др. — по соглашению с координатором).
+    Удаляет legacy-колонку users.system_role (идемпотентно).
+
+    RBAC только через user_roles; колонка не читается кодом и не должна существовать,
+    чтобы исключить будущие обращения как обход проверок.
+    Требуется SQLite с поддержкой DROP COLUMN (≥ 3.35).
     """
     async with aiosqlite.connect(db_path) as db:
         async with db.execute("PRAGMA table_info(users)") as cur:
             cols = {str(row[1]) for row in await cur.fetchall()}
         if "system_role" not in cols:
-            await db.execute(
-                "ALTER TABLE users ADD COLUMN system_role TEXT NOT NULL DEFAULT 'user'",
+            return
+        try:
+            await db.execute("ALTER TABLE users DROP COLUMN system_role")
+            await db.commit()
+            logger.info("migration: dropped users.system_role")
+        except aiosqlite.OperationalError as exc:
+            await db.rollback()
+            logger.warning(
+                "migration: DROP COLUMN system_role skipped (%s); обновите SQLite или пересоздайте БД",
+                exc,
             )
-            await db.commit()
-            logger.info("migration: added users.system_role")
-        else:
-            await db.commit()
 
 
 async def apply_all_reports_migrations(db_path: Path) -> None:
     await apply_reports_schema_fragment(db_path)
-    await migrate_users_system_role(db_path)
+    await migrate_drop_legacy_system_role(db_path)

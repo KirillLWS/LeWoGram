@@ -1,5 +1,5 @@
 """
-Бизнес-логика инвайтов для админ-маршрутов (owner / chief_admin).
+Бизнес-логика инвайтов для админ-маршрутов (операционный персонал: owner / chief_admin / admin).
 """
 
 from __future__ import annotations

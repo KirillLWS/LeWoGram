@@ -10,6 +10,7 @@ from typing import Any
 import aiosqlite
 from fastapi import HTTPException, status
 
+from app.auth import ban_policy
 from app.auth.service import (
     create_access_token,
     hash_refresh_token,
@@ -19,7 +20,10 @@ from app.auth.service import (
 )
 from app.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from app.database import db_auth_sessions, db_device_transfer
-from app.database.db_roles import list_user_ids_with_any_role
+from app.database.db_roles import (
+    OPERATIONAL_STAFF_ROLES,
+    list_user_ids_with_any_role,
+)
 from app.database.database import Database
 from app.device_transfer.schemas import (
     DeviceTransferPollOut,
@@ -30,7 +34,7 @@ from app.push.service import send_push_to_user
 
 logger = logging.getLogger(__name__)
 
-ADMIN_ROLES = ("owner", "chief_admin")
+_STAFF_TUPLE: tuple[str, ...] = tuple(sorted(OPERATIONAL_STAFF_ROLES))
 
 
 def _norm_phrase(phrase: str) -> str:
@@ -62,16 +66,15 @@ def _gen_short_code() -> str:
 
 
 async def _verify_actor_admin(db: Database, actor_id: int) -> None:
-    roles = await db.list_user_roles(actor_id)
-    if not (set(roles) & set(ADMIN_ROLES)):
+    if not await db.rbac_user_has_any_role(actor_id, OPERATIONAL_STAFF_ROLES):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Нужна роль owner или chief_admin",
+            "Нужна роль владельца, главного администратора или администратора",
         )
 
 
 async def _notify_admins(db: Database, title: str, body: str) -> None:
-    ids = await list_user_ids_with_any_role(db.db_path, ADMIN_ROLES)
+    ids = await list_user_ids_with_any_role(db.db_path, _STAFF_TUPLE)
     for uid in ids:
         await send_push_to_user(db, uid, title, body)
 
@@ -103,8 +106,13 @@ async def create_request(
         )
 
     uid = int(user["id"])
-    if int(user.get("is_blocked", 0)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Аккаунт заблокирован")
+    user = await ban_policy.materialize_user_ban(db, user)
+    blocked = ban_policy.account_block_payload(user)
+    if blocked is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=blocked,
+        )
 
     ok = False
     if pw:

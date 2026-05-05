@@ -12,6 +12,8 @@ class UserMeResponse(BaseModel):
     display_name: str | None = None
     about: str = ""
     avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False
     roles: list[str] = Field(default_factory=list)
 
 
@@ -31,6 +33,8 @@ class UserPublicResponse(BaseModel):
     display_name: str | None = None
     about: str = ""
     avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False
     relation_to_me: str = "none"
     friend_request_id: int | None = None
 
@@ -43,3 +47,5 @@ class UserSearchResult(BaseModel):
     display_name: str | None = None
     about: str = ""
     avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False

@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import 'package:lewogram_client/core/media/avatar_network_url.dart';
 import 'package:lewogram_client/features/profile/data/profile_user.dart';
 
 /// Круглый аватар: сеть (кэш), локальный файл (не web) или инициалы.
@@ -31,13 +32,17 @@ class ProfileAvatar extends StatelessWidget {
 
     if (ref != null && ref.isNotEmpty) {
       final lower = ref.toLowerCase();
-      if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      final networkUrl = (lower.startsWith('http://') || lower.startsWith('https://'))
+          ? ref
+          : resolveAvatarImageUrl(ref);
+
+      if (networkUrl != null) {
         return CircleAvatar(
           radius: radius,
           backgroundColor: scheme.primaryContainer,
           child: ClipOval(
             child: CachedNetworkImage(
-              imageUrl: ref,
+              imageUrl: networkUrl,
               width: size,
               height: size,
               fit: BoxFit.cover,
@@ -57,8 +62,10 @@ class ProfileAvatar extends StatelessWidget {
                   ),
                 ),
               ),
-              errorWidget: (_, __, ___) =>
-                  _placeholder(scheme, textTheme, initial, size),
+              errorWidget: (_, url, err) {
+                logAvatarLoadFailure(url, err);
+                return _placeholder(scheme, textTheme, initial, size);
+              },
             ),
           ),
         );
@@ -73,7 +80,10 @@ class ProfileAvatar extends StatelessWidget {
               width: size,
               height: size,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _placeholder(scheme, textTheme, initial, size),
+              errorBuilder: (_, err, __) {
+                logAvatarLoadFailure(ref, err);
+                return _placeholder(scheme, textTheme, initial, size);
+              },
             ),
           ),
         );

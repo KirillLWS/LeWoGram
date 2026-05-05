@@ -3,6 +3,8 @@ import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
+import 'package:lewogram_client/features/users/data/user_public_profile.dart';
+import 'package:lewogram_client/features/users/presentation/user_profile_screen.dart';
 
 /// Экран переписки по [chatId]. Сообщения подгружаются через [ApiClient.getMessages],
 /// отправка — [ApiClient.sendText].
@@ -12,12 +14,16 @@ import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 ///
 /// Заголовок AppBar: приоритет локального переименования → [initialDisplayTitle] →
 /// [initialTitle] → peer → «Чат #id».
+/// [chatType] и [peerUserId] для direct: кнопка «Профиль» и переход на экран пользователя.
+/// Если [peerUserId] не передан, для личного чата можно определить собеседника по сообщениям.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.chatId,
     required this.apiClient,
     this.currentUserId,
+    this.chatType,
+    this.peerUserId,
     this.initialDisplayTitle,
     this.initialTitle,
     this.initialAvatarPath,
@@ -30,6 +36,12 @@ class ChatScreen extends StatefulWidget {
 
   /// Если задан — сравнение «своё / чужое» без лишнего GET /me.
   final int? currentUserId;
+
+  /// Например `direct` / `group` — для группы кнопка профиля собеседника скрыта.
+  final String? chatType;
+
+  /// Собеседник в личном чате (передаётся из списка или при открытии из друзей).
+  final int? peerUserId;
 
   final String? initialDisplayTitle;
   final String? initialTitle;
@@ -217,6 +229,75 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     return m.senderId == me;
   }
 
+  bool _isDirectChat() {
+    final t = widget.chatType?.trim().toLowerCase();
+    if (t == null || t.isEmpty) return true;
+    return t == 'direct';
+  }
+
+  int? _resolvedPeerUserId() {
+    final w = widget.peerUserId;
+    if (w != null) return w;
+    if (!_isDirectChat()) return null;
+    final me = _currentUserId;
+    if (me == null) return null;
+    for (final m in _messages) {
+      final sid = m.senderId;
+      if (sid != null && sid != me) return sid;
+    }
+    return null;
+  }
+
+  Future<void> _openPeerProfile() async {
+    final peerId = _resolvedPeerUserId();
+    if (peerId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось определить пользователя')),
+      );
+      return;
+    }
+    try {
+      final raw = await widget.apiClient.getUserPublic(peerId);
+      if (!mounted) return;
+      final profile = UserPublicProfile.fromJson(Map<String, dynamic>.from(raw));
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (ctx) => UserProfileScreen(
+            profile: profile,
+            apiClient: widget.apiClient,
+            onWrite: (otherUserId) async {
+              Navigator.of(ctx).pop();
+              if (otherUserId == peerId) return;
+              try {
+                final chat = await widget.apiClient.createDirectChat(otherUserId);
+                if (!mounted) return;
+                final id = (chat['id'] as num).toInt();
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ChatScreen(
+                      chatId: id,
+                      apiClient: widget.apiClient,
+                      currentUserId: _currentUserId,
+                      chatType: 'direct',
+                      peerUserId: otherUserId,
+                    ),
+                  ),
+                );
+              } on ApiException catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+              }
+            },
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   String _shortMessageTime(String iso) {
     final dt = DateTime.tryParse(iso);
     if (dt == null) return '';
@@ -232,50 +313,27 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   }
 
   Future<void> _showRenameDialog() async {
-    final ctrl = TextEditingController(text: _appBarTitle);
-    final submitted = await showDialog<bool>(
+    // Controller must live in dialog [State] and be disposed there. Disposing it
+    // in the parent as soon as [showDialog] completes runs before the route has
+    // torn down [TextField], which can break InheritedWidget teardown
+    // (debug: InheritedElement.debugDeactivated / _dependents.isEmpty).
+    final next = await showDialog<String?>(
       context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Название чата'),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            decoration: const InputDecoration(
-              hintText: 'Отображаемое имя',
-              border: OutlineInputBorder(),
-            ),
-            textCapitalization: TextCapitalization.sentences,
-            maxLines: 1,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Сохранить'),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => _ChatRenameDialog(initialTitle: _appBarTitle),
     );
-    if (submitted != true || !mounted) {
-      ctrl.dispose();
-      return;
-    }
-    final next = ctrl.text.trim();
-    ctrl.dispose();
-    if (next.isEmpty) return;
+    if (next == null || next.isEmpty || !mounted) return;
     try {
       await widget.apiClient.renameChat(widget.chatId, next);
       if (!mounted) return;
-      setState(() => _titleOverride = next);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Название обновлено')),
-      );
+      final titleToApply = next;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _titleOverride = titleToApply);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Название обновлено')),
+        );
+      });
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -289,6 +347,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final peerForProfile = _resolvedPeerUserId();
+    final showProfileAction = _isDirectChat() && peerForProfile != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -316,6 +376,12 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
           ],
         ),
         actions: [
+          if (showProfileAction)
+            IconButton(
+              icon: const Icon(Icons.person_outline),
+              tooltip: 'Профиль',
+              onPressed: _openPeerProfile,
+            ),
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Переименовать',
@@ -469,6 +535,67 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ChatRenameDialog extends StatefulWidget {
+  const _ChatRenameDialog({required this.initialTitle});
+
+  final String initialTitle;
+
+  @override
+  State<_ChatRenameDialog> createState() => _ChatRenameDialogState();
+}
+
+class _ChatRenameDialogState extends State<_ChatRenameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialTitle);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Название чата'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          hintText: 'Отображаемое имя',
+          border: OutlineInputBorder(),
+        ),
+        textCapitalization: TextCapitalization.sentences,
+        maxLines: 1,
+        onSubmitted: (_) {
+          final t = _controller.text.trim();
+          if (t.isEmpty) return;
+          Navigator.pop(context, t);
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final t = _controller.text.trim();
+            if (t.isEmpty) return;
+            Navigator.pop(context, t);
+          },
+          child: const Text('Сохранить'),
+        ),
+      ],
     );
   }
 }

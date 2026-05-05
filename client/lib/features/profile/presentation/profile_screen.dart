@@ -49,7 +49,8 @@ class ProfileScreen extends StatefulWidget {
   final Future<void> Function(String localPath)? onAvatarPicked;
 
   /// Сохранение полей профиля из модалки редактирования.
-  final Future<void> Function(String displayName, String username, String about)? onSaveProfile;
+  final Future<void> Function(
+      String displayName, String username, String about)? onSaveProfile;
 
   /// Подмена URL/пути аватара над значением из API.
   final String? avatarUrlOverride;
@@ -63,13 +64,13 @@ class ProfileScreen extends StatefulWidget {
   /// Асинхронная подгрузка ролей (например из API); вызывается при открытии и при обновлении профиля.
   final Future<List<String>> Function()? loadRoles;
 
-  /// Условие показа пункта «Инвайты» (обычно owner / chief_admin).
+  /// Условие показа «Инвайты» и «Запросы смены устройства» (owner, chief_admin, admin).
   final bool Function(List<String> roles)? invitesEligibility;
 
   /// Открыть экран управления инвайтами.
   final VoidCallback? onOpenInvites;
 
-  /// Перейти к списку запросов на смену устройства (owner / chief_admin).
+  /// Перейти к списку запросов на смену устройства (owner, chief_admin, admin).
   final VoidCallback? onOpenDeviceTransferPending;
 
   /// Перейти к одноразовому claim владельца ([OwnerClaimScreen]).
@@ -262,7 +263,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                       child: Text(
                         _error!,
                         textAlign: TextAlign.center,
-                        style: textTheme.bodyLarge?.copyWith(color: scheme.error),
+                        style:
+                            textTheme.bodyLarge?.copyWith(color: scheme.error),
                       ),
                     ),
                   ),
@@ -270,7 +272,12 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
               else if (_user != null) ...[
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      20,
+                      20,
+                      24 + MediaQuery.paddingOf(context).bottom,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -344,7 +351,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                               _InfoTile(
                                 icon: Icons.badge_outlined,
                                 label: 'Отображаемое имя',
-                                value: _user!.displayName?.trim().isNotEmpty == true
+                                value: _user!.displayName?.trim().isNotEmpty ==
+                                        true
                                     ? _user!.displayName!.trim()
                                     : '—',
                               ),
@@ -414,7 +422,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                   (r) => Chip(
                                     label: Text(r),
                                     visualDensity: VisualDensity.compact,
-                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                 )
                                 .toList(),
@@ -428,7 +437,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 16, 16, 8),
                                 child: Text(
                                   'Безопасность',
                                   style: textTheme.titleMedium?.copyWith(
@@ -437,9 +447,10 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                 ),
                               ),
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 8),
                                 child: Text(
-                                  'Управление сессиями и ключами появится ниже; инвайты — для владельца и главного админа.',
+                                  'Управление сессиями и ключами появится ниже; инвайты и смена устройства — для владельца, главного админа и администратора.',
                                   style: textTheme.bodyMedium?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),
@@ -458,7 +469,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: widget.onOpenOwnerClaim,
                                 ),
-                                Divider(height: 1, color: scheme.outlineVariant),
+                                Divider(
+                                    height: 1, color: scheme.outlineVariant),
                               ],
                               if (widget.invitesEligibility != null &&
                                   widget.onOpenInvites != null &&
@@ -476,7 +488,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: widget.onOpenInvites,
                                 ),
-                                Divider(height: 1, color: scheme.outlineVariant),
+                                Divider(
+                                    height: 1, color: scheme.outlineVariant),
                               ],
                               if (widget.invitesEligibility != null &&
                                   widget.onOpenDeviceTransferPending != null &&
@@ -494,23 +507,27 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: widget.onOpenDeviceTransferPending,
                                 ),
-                                Divider(height: 1, color: scheme.outlineVariant),
+                                Divider(
+                                    height: 1, color: scheme.outlineVariant),
                               ],
                               ListTile(
-                                leading: Icon(Icons.history_outlined, color: scheme.primary),
+                                leading: Icon(Icons.history_outlined,
+                                    color: scheme.primary),
                                 title: const Text('История назначения ролей'),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () {
                                   Navigator.of(context).push<void>(
                                     MaterialPageRoute<void>(
-                                      builder: (_) => const RoleHistoryPlaceholderScreen(),
+                                      builder: (_) =>
+                                          const RoleHistoryPlaceholderScreen(),
                                     ),
                                   );
                                 },
                               ),
                               Divider(height: 1, color: scheme.outlineVariant),
                               ListTile(
-                                leading: Icon(Icons.settings_outlined, color: scheme.primary),
+                                leading: Icon(Icons.settings_outlined,
+                                    color: scheme.primary),
                                 title: const Text('Настройки'),
                                 subtitle: const Text('Тема оформления'),
                                 trailing: const Icon(Icons.chevron_right),
@@ -520,14 +537,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                               ),
                               Divider(height: 1, color: scheme.outlineVariant),
                               ListTile(
-                                leading: Icon(Icons.developer_mode_outlined, color: scheme.primary),
+                                leading: Icon(Icons.developer_mode_outlined,
+                                    color: scheme.primary),
                                 title: const Text('Сервис и отладка'),
-                                subtitle: const Text('Информация для разработчика'),
+                                subtitle:
+                                    const Text('Информация для разработчика'),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () {
                                   Navigator.of(context).push<void>(
                                     MaterialPageRoute<void>(
-                                      builder: (_) => const DeveloperHubScreen(),
+                                      builder: (_) =>
+                                          const DeveloperHubScreen(),
                                     ),
                                   );
                                 },
@@ -537,11 +557,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                         ),
                         const SizedBox(height: 32),
                         FilledButton.tonal(
-                          onPressed: widget.onLogout == null || _loggingOut ? null : _logout,
+                          onPressed: widget.onLogout == null || _loggingOut
+                              ? null
+                              : _logout,
                           style: FilledButton.styleFrom(
-                            foregroundColor: scheme.error,
+                            foregroundColor: scheme.onErrorContainer,
                             backgroundColor: scheme.errorContainer,
                             padding: const EdgeInsets.symmetric(vertical: 16),
+                            textStyle: textTheme.labelLarge?.copyWith(
+                              color: scheme.onErrorContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           child: _loggingOut
                               ? SizedBox(
@@ -549,7 +575,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                   width: 22,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: scheme.error,
+                                    color: scheme.onErrorContainer,
                                   ),
                                 )
                               : const Text('Выйти'),

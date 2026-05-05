@@ -3,8 +3,58 @@ import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
+import 'package:lewogram_client/features/users/data/user_public_profile.dart';
+import 'package:lewogram_client/features/users/presentation/user_profile_screen.dart';
 
-/// Вкладка «Друзья»: списки, заявки, подписки.
+/// Открыть публичный профиль и передать навигацию в чат из [UserProfileScreen.onWrite].
+Future<void> pushUserPublicProfile({
+  required BuildContext context,
+  required ApiClient apiClient,
+  required int userId,
+}) async {
+  final nav = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final raw = await apiClient.getUserPublic(userId);
+    if (!context.mounted) return;
+    final profile = UserPublicProfile.fromJson(Map<String, dynamic>.from(raw));
+    await nav.push<void>(
+      MaterialPageRoute<void>(
+        builder: (ctx) => UserProfileScreen(
+          profile: profile,
+          apiClient: apiClient,
+          onWrite: (otherId) async {
+            final chat = await apiClient.createDirectChat(otherId);
+            if (!ctx.mounted) return;
+            Navigator.of(ctx).pop();
+            if (!context.mounted) return;
+            final chatId = (chat['id'] as num).toInt();
+            final titleHint = profile.displayName?.trim().isNotEmpty == true
+                ? profile.displayName!.trim()
+                : profile.username;
+            await nav.push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => ChatScreen(
+                  chatId: chatId,
+                  apiClient: apiClient,
+                  chatType: 'direct',
+                  peerUserId: otherId,
+                  initialDisplayTitle: titleHint,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  } on ApiException catch (e) {
+    if (!context.mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text(e.message)));
+  } catch (e) {
+    if (!context.mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text('$e')));
+  }
+}
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({
     super.key,
@@ -129,6 +179,8 @@ class _FriendsListTabState extends State<_FriendsListTab> with AutoRefreshMixin 
           builder: (_) => ChatScreen(
             chatId: chatId,
             apiClient: widget.apiClient,
+            chatType: 'direct',
+            peerUserId: otherId,
             initialDisplayTitle: titleHint,
           ),
         ),
@@ -190,17 +242,40 @@ class _FriendsListTabState extends State<_FriendsListTab> with AutoRefreshMixin 
         itemBuilder: (context, i) {
           final u = _rows[i];
           final title = _friendTitle(u);
-          final avatar = u['avatar_path'] as String?;
+          final avatar = u['avatar_url'] as String? ?? u['avatar_path'] as String?;
+          final userId = (u['id'] as num).toInt();
           return ListTile(
-            leading: ChatAvatarCircle(
-              letter: chatAvatarLetter(title),
-              avatarPath: avatar,
+            leading: InkWell(
+              onTap: () => pushUserPublicProfile(
+                context: context,
+                apiClient: widget.apiClient,
+                userId: userId,
+              ),
+              customBorder: const CircleBorder(),
+              child: ChatAvatarCircle(
+                letter: chatAvatarLetter(title),
+                avatarPath: avatar,
+              ),
             ),
             title: Text(title),
             subtitle: Text('@${u['username'] ?? ''}'),
-            trailing: FilledButton.tonal(
-              onPressed: () => _openChat((u['id'] as num).toInt(), title),
-              child: const Text('Открыть чат'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.person_outline),
+                  tooltip: 'Профиль',
+                  onPressed: () => pushUserPublicProfile(
+                    context: context,
+                    apiClient: widget.apiClient,
+                    userId: userId,
+                  ),
+                ),
+                FilledButton.tonal(
+                  onPressed: () => _openChat(userId, title),
+                  child: const Text('Открыть чат'),
+                ),
+              ],
             ),
           );
         },
@@ -324,12 +399,21 @@ class _IncomingRequestsTabState extends State<_IncomingRequestsTab> with AutoRef
           final m = _rows[i];
           final reqId = (m['request_id'] as num).toInt();
           final u = Map<String, dynamic>.from(m['user'] as Map);
+          final userId = (u['id'] as num).toInt();
           final title = _friendTitle(u);
-          final avatar = u['avatar_path'] as String?;
+          final avatar = u['avatar_url'] as String? ?? u['avatar_path'] as String?;
           return ListTile(
-            leading: ChatAvatarCircle(
-              letter: chatAvatarLetter(title),
-              avatarPath: avatar,
+            leading: InkWell(
+              onTap: () => pushUserPublicProfile(
+                context: context,
+                apiClient: widget.apiClient,
+                userId: userId,
+              ),
+              customBorder: const CircleBorder(),
+              child: ChatAvatarCircle(
+                letter: chatAvatarLetter(title),
+                avatarPath: avatar,
+              ),
             ),
             title: Text(title),
             subtitle: Column(
@@ -493,11 +577,19 @@ class _OutgoingRequestsTabState extends State<_OutgoingRequestsTab> with AutoRef
           final u = Map<String, dynamic>.from(m['user'] as Map);
           final targetId = (u['id'] as num).toInt();
           final title = _friendTitle(u);
-          final avatar = u['avatar_path'] as String?;
+          final avatar = u['avatar_url'] as String? ?? u['avatar_path'] as String?;
           return ListTile(
-            leading: ChatAvatarCircle(
-              letter: chatAvatarLetter(title),
-              avatarPath: avatar,
+            leading: InkWell(
+              onTap: () => pushUserPublicProfile(
+                context: context,
+                apiClient: widget.apiClient,
+                userId: targetId,
+              ),
+              customBorder: const CircleBorder(),
+              child: ChatAvatarCircle(
+                letter: chatAvatarLetter(title),
+                avatarPath: avatar,
+              ),
             ),
             title: Text(title),
             subtitle: Text('@${u['username'] ?? ''}'),

@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.avatar_fields import apply_avatar_fields
 from app.database.database import Database
 from app.messages.schemas import (
     ChatResponse,
@@ -57,6 +58,8 @@ def _chat_response_from_row(row: dict[str, Any]) -> ChatResponse:
     d.setdefault("unread_count", 0)
     d.setdefault("display_title", None)
     d.setdefault("display_subtitle", None)
+    d.setdefault("peer_user_id", None)
+    apply_avatar_fields(d)
     return ChatResponse.model_validate(d)
 
 
@@ -101,6 +104,7 @@ async def _enrich_chat_display_fields(
     direct: кастомное chats.title; иначе display_name > username > login;
     subtitle — следующий в цепочке или при кастомном title первый peer-поле, отличное от title.
     """
+    peer_id_raw = row.pop("direct_peer_id", None)
     peer_login = _strip_or_none(row.pop("direct_peer_login", None))
     peer_username = _strip_or_none(row.pop("direct_peer_username", None))
     peer_display = _strip_or_none(row.pop("direct_peer_display_name", None))
@@ -108,9 +112,11 @@ async def _enrich_chat_display_fields(
     raw_title = row.get("title")
 
     if ctype == "direct":
+        row["peer_user_id"] = int(peer_id_raw) if peer_id_raw is not None else None
         if peer_login is None and peer_display is None and peer_username is None:
             peer = await db.get_direct_chat_peer_user(int(row["id"]), viewer_user_id)
             if peer:
+                row["peer_user_id"] = int(peer["id"])
                 peer_login = _strip_or_none(peer.get("login"))
                 peer_username = _strip_or_none(peer.get("username"))
                 peer_display = _strip_or_none(peer.get("display_name"))
@@ -127,6 +133,7 @@ async def _enrich_chat_display_fields(
             row["display_title"] = peer_title
             row["display_subtitle"] = peer_sub
     else:
+        row["peer_user_id"] = None
         row["display_title"] = _strip_or_none(raw_title)
         row["display_subtitle"] = _strip_or_none(row.get("description"))
 

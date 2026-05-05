@@ -268,7 +268,13 @@ async def create_sanction(
         sid = int(cur.lastrowid)
         if sanction_type == "ban":
             await dbw.execute(
-                "UPDATE users SET is_blocked = 1 WHERE id = ?",
+                """
+                UPDATE users
+                SET is_blocked = 1,
+                    account_status = 'banned',
+                    ban_until = NULL
+                WHERE id = ?
+                """,
                 (user_id,),
             )
         await dbw.commit()
@@ -325,7 +331,14 @@ async def revoke_sanction(
     if stype == "ban" and remaining_bans == 0:
         async with aiosqlite.connect(_db_path(db)) as dbw2:
             await dbw2.execute(
-                "UPDATE users SET is_blocked = 0 WHERE id = ?",
+                """
+                UPDATE users
+                SET is_blocked = 0,
+                    account_status = 'active',
+                    ban_until = NULL,
+                    ban_reason = ''
+                WHERE id = ? AND staff_ban = 0
+                """,
                 (uid,),
             )
             await dbw2.commit()

@@ -22,6 +22,7 @@ from app.auth.schemas import (
     UserResponse,
 )
 from app.auth import service as auth_service
+from app.avatar_fields import apply_avatar_fields
 from app.database.database import Database
 from app.device_transfer.schemas import DeviceTransferRequestOut, RecoverInitRequest
 
@@ -127,8 +128,14 @@ async def me(
 ) -> UserResponse:
     """Текущий пользователь по JWT."""
     uid = int(user["id"])
-    roles = await db.list_user_roles(uid)
-    payload = {**user, "roles": roles}
+    roles = list(await db.list_user_roles(uid))
+    # Права только из user_roles; чувствительные поля строки users не передаём в ответ.
+    _me_excluded = frozenset(
+        {"password_hash", "recovery_phrase_hash", "system_role"},
+    )
+    safe = {k: v for k, v in user.items() if k not in _me_excluded}
+    payload = {**safe, "roles": roles}
+    apply_avatar_fields(payload)
     return UserResponse.model_validate(payload)
 
 

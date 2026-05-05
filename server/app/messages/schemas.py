@@ -61,6 +61,8 @@ class ChatResponse(BaseModel):
     title: str | None = None
     description: str | None = None
     avatar_path: str | None = None
+    avatar_url: str | None = None
+    avatar_exists: bool = False
     created_by: int | None = None
     is_archived: bool = False
     members_count: int = 0
@@ -73,6 +75,7 @@ class ChatResponse(BaseModel):
     unread_count: int = 0
     display_title: str | None = None
     display_subtitle: str | None = None
+    peer_user_id: int | None = None
     # direct: title = кастомный chats.title или display_name > username > login;
     # subtitle — следующий в цепочке или при кастоме — первое peer-поле, отличное от title.
 

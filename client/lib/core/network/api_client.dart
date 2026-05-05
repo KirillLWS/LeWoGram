@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:lewogram_client/core/config/app_config.dart';
+import 'package:lewogram_client/core/network/account_banned_exception.dart';
+import 'package:lewogram_client/core/network/account_blocked_parse.dart';
 import 'package:lewogram_client/core/storage/token_storage.dart';
 
 /// Ошибка API или сети (не 401 «сессия»).
@@ -49,6 +53,10 @@ class ApiClient {
   })  : _baseUrl = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), ''),
         _tokenStorage = tokenStorage,
         _http = httpClient ?? http.Client();
+
+  /// Таймаут для админ-обзора смены устройства (ожидание ответа сервера целиком,
+  /// включая возможный refresh токена).
+  static const Duration deviceTransferAdminOverviewTimeout = Duration(seconds: 45);
 
   /// После сброса токена при 401 с Bearer (например навигация на `/login`).
   final UnauthorizedCallback? onUnauthorized;
@@ -132,6 +140,10 @@ class ApiClient {
       );
       if (resp.statusCode != 200) {
         await _tokenStorage.clearToken();
+        final banned = parseAccountBlockedFromBody(utf8.decode(resp.bodyBytes));
+        if (banned != null) {
+          throw banned;
+        }
         return false;
       }
       final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
@@ -146,7 +158,8 @@ class ApiClient {
         await _tokenStorage.saveRefreshToken(next);
       }
       return true;
-    } catch (_) {
+    } catch (e) {
+      if (e is AccountBannedException) rethrow;
       await _tokenStorage.clearToken();
       return false;
     }
@@ -166,6 +179,13 @@ class ApiClient {
     }
     if (resp.statusCode == 401) {
       await _on401IfHadBearer(hadBearer, resp);
+    }
+    if (resp.statusCode == 403 && hadBearer) {
+      final banned = parseAccountBlockedFromBody(resp.body);
+      if (banned != null) {
+        await _tokenStorage.clearToken();
+        throw banned;
+      }
     }
     return resp;
   }
@@ -205,6 +225,10 @@ class ApiClient {
         }
       }
       if (resp.statusCode == 401 || resp.statusCode == 403) {
+        final banned = parseAccountBlockedFromBody(utf8.decode(resp.bodyBytes));
+        if (banned != null) {
+          throw banned;
+        }
         throw ApiException(
           _extractErrorMessage(resp.body),
           statusCode: resp.statusCode,
@@ -227,6 +251,8 @@ class ApiClient {
         await _tokenStorage.saveRefreshToken(refresh);
       }
       return data;
+    } on AccountBannedException {
+      rethrow;
     } on SocketException catch (e) {
       throw ApiException('Нет сети: ${e.message}');
     } on http.ClientException catch (e) {
@@ -405,12 +431,23 @@ class ApiClient {
     }
   }
 
-  /// [GET /device-transfer/admin-overview] — pending + history (owner / chief_admin).
+  /// [GET /device-transfer/admin-overview] — pending + history (owner / chief_admin / admin).
   Future<Map<String, dynamic>> deviceTransferAdminOverview() async {
     final uri = _uri('/device-transfer/admin-overview');
+    developer.log('start', name: 'lewogram.api.device_transfer.admin_overview');
     try {
       final resp = await _authorizedJsonRequest(
         (headers) => _http.get(uri, headers: headers),
+      ).timeout(
+        deviceTransferAdminOverviewTimeout,
+        onTimeout: () => throw TimeoutException(
+          'Таймаут ${deviceTransferAdminOverviewTimeout.inSeconds} с',
+          deviceTransferAdminOverviewTimeout,
+        ),
+      );
+      developer.log(
+        'response status=${resp.statusCode} bytes=${resp.bodyBytes.length}',
+        name: 'lewogram.api.device_transfer.admin_overview',
       );
       if (resp.statusCode != 200) {
         throw ApiException(
@@ -419,14 +456,49 @@ class ApiClient {
         );
       }
       final data = jsonDecode(utf8.decode(resp.bodyBytes));
-      if (data is Map<String, dynamic>) return data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
       throw ApiException('Неверный ответ сервера');
+    } on TimeoutException catch (e) {
+      developer.log(
+        'timeout: $e',
+        name: 'lewogram.api.device_transfer.admin_overview',
+      );
+      throw ApiException(
+        'Сервер не ответил вовремя (${deviceTransferAdminOverviewTimeout.inSeconds} с). '
+        'Проверьте адрес ${AppConfig.baseUrl} и сеть.',
+      );
     } on SocketException catch (e) {
+      developer.log(
+        'socket: ${e.message}',
+        name: 'lewogram.api.device_transfer.admin_overview',
+      );
       throw ApiException('Нет сети: ${e.message}');
     } on http.ClientException catch (e) {
+      developer.log(
+        'client: ${e.message}',
+        name: 'lewogram.api.device_transfer.admin_overview',
+      );
       throw ApiException('Сеть: ${e.message}');
     } on FormatException catch (e) {
+      developer.log(
+        'format: ${e.message}',
+        name: 'lewogram.api.device_transfer.admin_overview',
+      );
       throw ApiException('Неверный ответ сервера: ${e.message}');
+    } on ApiException {
+      rethrow;
+    } on UnauthorizedException {
+      rethrow;
+    } catch (e, st) {
+      developer.log(
+        'error: $e',
+        name: 'lewogram.api.device_transfer.admin_overview',
+        error: e,
+        stackTrace: st,
+      );
+      rethrow;
     }
   }
 
@@ -455,7 +527,7 @@ class ApiClient {
     }
   }
 
-  /// [GET /device-transfer/pending] (owner / chief_admin).
+  /// [GET /device-transfer/pending] (owner / chief_admin / admin).
   Future<List<dynamic>> deviceTransferPending() async {
     final uri = _uri('/device-transfer/pending');
     try {
@@ -539,12 +611,18 @@ class ApiClient {
         (headers) => _http.get(uri, headers: headers),
       );
       if (resp.statusCode != 200) {
+        final banned = parseAccountBlockedFromBody(utf8.decode(resp.bodyBytes));
+        if (banned != null) {
+          throw banned;
+        }
         throw ApiException(
           _extractErrorMessage(resp.body),
           statusCode: resp.statusCode,
         );
       }
       return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on AccountBannedException {
+      rethrow;
     } on SocketException catch (e) {
       throw ApiException('Нет сети: ${e.message}');
     } on http.ClientException catch (e) {
@@ -824,7 +902,7 @@ class ApiClient {
     }
   }
 
-  /// Создать инвайт (только owner / chief_admin на сервере).
+  /// Создать инвайт (owner / chief_admin / admin на сервере).
   Future<Map<String, dynamic>> createAdminInvite({
     int expiresHours = 48,
     String? note,
@@ -854,7 +932,7 @@ class ApiClient {
     }
   }
 
-  /// Список инвайтов (owner / chief_admin).
+  /// Список инвайтов (owner / chief_admin / admin).
   Future<List<dynamic>> listAdminInvites({int limit = 100}) async {
     final uri = _uri('/admin/invites', {'limit': '$limit'});
     try {
@@ -1181,6 +1259,93 @@ class ApiClient {
       throw ApiException('Сеть: ${e.message}');
     } on FormatException catch (e) {
       throw ApiException('Неверный JSON push: ${e.message}');
+    }
+  }
+
+  /// Список всех пользователей ([GET /admin/users], staff).
+  Future<Map<String, dynamic>> adminListUsers({
+    int limit = 50,
+    int offset = 0,
+    String? query,
+  }) async {
+    final uri = _uri('/admin/users', {
+      'limit': '$limit',
+      'offset': '$offset',
+      if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON списка пользователей: ${e.message}');
+    }
+  }
+
+  /// Staff-блокировка ([POST /admin/users/{id}/ban]).
+  Future<Map<String, dynamic>> adminBanUser(
+    int userId, {
+    required String kind,
+    String reason = '',
+    int? durationMinutes,
+  }) async {
+    final uri = _uri('/admin/users/$userId/ban');
+    final body = <String, dynamic>{
+      'kind': kind,
+      'reason': reason,
+      if (durationMinutes != null) 'duration_minutes': durationMinutes,
+    };
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(uri, headers: headers, body: jsonEncode(body)),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON бана: ${e.message}');
+    }
+  }
+
+  /// Снять staff-блокировку ([POST /admin/users/{id}/unban]).
+  Future<Map<String, dynamic>> adminUnbanUser(int userId) async {
+    final uri = _uri('/admin/users/$userId/unban');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(uri, headers: headers, body: '{}'),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON разбана: ${e.message}');
     }
   }
 

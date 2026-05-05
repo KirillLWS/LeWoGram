@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
@@ -23,38 +25,67 @@ class _DeviceTransfersScreenState extends State<DeviceTransfersScreen> {
     _load();
   }
 
+  List<Map<String, dynamic>> _coerceRowList(dynamic raw) {
+    if (raw is! List) return <Map<String, dynamic>>[];
+    final out = <Map<String, dynamic>>[];
+    for (final e in raw) {
+      if (e is Map<String, dynamic>) {
+        out.add(e);
+      } else if (e is Map) {
+        out.add(Map<String, dynamic>.from(e));
+      }
+    }
+    return out;
+  }
+
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final api = AppScope.of(context).apiClient;
+    developer.log('request start', name: 'lewogram.ui.device_transfers');
     try {
+      final api = AppScope.of(context).apiClient;
       final m = await api.deviceTransferAdminOverview();
-      final p = m['pending'];
-      final h = m['history'];
+      developer.log(
+        'response: pending=${(m['pending'] is List) ? (m['pending'] as List).length : 0} '
+        'history=${(m['history'] is List) ? (m['history'] as List).length : 0}',
+        name: 'lewogram.ui.device_transfers',
+      );
       if (!mounted) return;
       setState(() {
-        _pending = (p is List)
-            ? p.map((e) => Map<String, dynamic>.from(e as Map)).toList()
-            : <Map<String, dynamic>>[];
-        _history = (h is List)
-            ? h.map((e) => Map<String, dynamic>.from(e as Map)).toList()
-            : <Map<String, dynamic>>[];
-        _loading = false;
+        _pending = _coerceRowList(m['pending']);
+        _history = _coerceRowList(m['history']);
+        _error = null;
       });
     } on ApiException catch (e) {
+      developer.log(
+        'ApiException: ${e.message}',
+        name: 'lewogram.ui.device_transfers',
+      );
       if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _loading = false;
-      });
-    } catch (e) {
+      setState(() => _error = e.message);
+    } on UnauthorizedException catch (e) {
+      developer.log(
+        'UnauthorizedException: ${e.message}',
+        name: 'lewogram.ui.device_transfers',
+      );
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+      setState(() => _error = e.message);
+    } catch (e, st) {
+      developer.log(
+        'exception: $e',
+        name: 'lewogram.ui.device_transfers',
+        error: e,
+        stackTrace: st,
+      );
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -316,46 +347,71 @@ class _DeviceTransfersScreenState extends State<DeviceTransfersScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      Text(
-                        'Ожидают решения',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
+                      if (_pending.isEmpty && _history.isEmpty) ...[
+                        Icon(
+                          Icons.devices_other_outlined,
+                          size: 48,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_pending.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 24),
-                          child: Text(
-                            'Нет активных заявок',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        )
-                      else
-                        ..._pending.map(
-                          (r) => _card(r, showActions: true, theme: theme),
-                        ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'История',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_history.isEmpty)
+                        const SizedBox(height: 12),
                         Text(
-                          'Пока пусто',
+                          'Устройства не найдены',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Нет активных заявок и записей в истории.',
+                          textAlign: TextAlign.center,
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
-                        )
-                      else
-                        ..._history.map(
-                          (r) => _card(r, showActions: false, theme: theme),
                         ),
+                        const SizedBox(height: 24),
+                      ] else ...[
+                        Text(
+                          'Ожидают решения',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (_pending.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 24),
+                            child: Text(
+                              'Нет активных заявок',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          )
+                        else
+                          ..._pending.map(
+                            (r) => _card(r, showActions: true, theme: theme),
+                          ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'История',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (_history.isEmpty)
+                          Text(
+                            'Пока пусто',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          )
+                        else
+                          ..._history.map(
+                            (r) => _card(r, showActions: false, theme: theme),
+                          ),
+                      ],
                     ],
                   ),
                 ),

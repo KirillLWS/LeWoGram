@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from mnemonic import Mnemonic
 
 from app.auth import invite as invite_module
+from app.auth import ban_policy
 from app.auth.schemas import (
     ChangePasswordRequest,
     LoginRequest,
@@ -166,6 +167,21 @@ async def refresh_access_token(
         client_ip=client_ip,
     )
     if meta is None:
+        blocked_row = await db_auth_sessions.find_blocked_user_for_valid_refresh(
+            db.db_path,
+            old_h,
+        )
+        if blocked_row is not None:
+            uid0 = int(blocked_row["id"])
+            user0 = await db.get_user_by_id(uid0)
+            user0 = await ban_policy.materialize_user_ban(db, user0)
+            payload = ban_policy.account_block_payload(user0) if user0 else None
+            await db_auth_sessions.revoke_all_sessions_for_user(db.db_path, uid0)
+            if payload is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=payload,
+                )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Недействительный или просроченный refresh-токен",
@@ -226,15 +242,17 @@ async def get_current_user(token: str, db: Database) -> dict[str, Any]:
         )
 
     user = await db.get_user_by_id(uid)
+    user = await ban_policy.materialize_user_ban(db, user)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Пользователь не найден",
         )
-    if int(user.get("is_blocked", 0)):
+    blocked = ban_policy.account_block_payload(user)
+    if blocked is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Аккаунт заблокирован",
+            detail=blocked,
         )
     return user
 
@@ -330,11 +348,13 @@ async def login_user(
 
     uid = int(user["id"])
 
-    if int(user.get("is_blocked", 0)):
+    user = await ban_policy.materialize_user_ban(db, user)
+    blocked = ban_policy.account_block_payload(user)
+    if blocked is not None:
         await db.add_login_log(uid, fp, client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Аккаунт заблокирован",
+            detail=blocked,
         )
 
     if not verify_password(body.password, user["password_hash"]):

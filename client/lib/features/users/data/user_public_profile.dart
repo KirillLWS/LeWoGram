@@ -27,12 +27,16 @@ class UserPublicProfile {
     final fr = json['friend_request_id'];
     if (fr is num) reqId = fr.toInt();
 
+    final rawPath = json['avatar_url'] as String? ?? json['avatar_path'] as String?;
+    final trimmedPath = rawPath?.trim();
+    final avatarPath =
+        trimmedPath != null && trimmedPath.isNotEmpty ? trimmedPath : null;
     return UserPublicProfile(
       id: (json['id'] as num).toInt(),
       username: json['username'] as String? ?? '',
       displayName: json['display_name'] as String?,
       about: json['about'] as String?,
-      avatarPath: json['avatar_path'] as String?,
+      avatarPath: avatarPath,
       relationToMe: json['relation_to_me'] as String?,
       friendRequestId: reqId,
     );
