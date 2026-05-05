@@ -31,6 +31,8 @@ class UserPublicResponse(BaseModel):
     display_name: str | None = None
     about: str = ""
     avatar_path: str | None = None
+    relation_to_me: str = "none"
+    friend_request_id: int | None = None
 
 
 class UserSearchResult(BaseModel):

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 
 /// Управление инвайтами (только owner / chief_admin на backend).
@@ -15,7 +16,7 @@ class InvitesScreen extends StatefulWidget {
   State<InvitesScreen> createState() => _InvitesScreenState();
 }
 
-class _InvitesScreenState extends State<InvitesScreen> {
+class _InvitesScreenState extends State<InvitesScreen> with AutoRefreshMixin {
   final _hoursCtrl = TextEditingController(text: '48');
   final _noteCtrl = TextEditingController();
 
@@ -24,6 +25,12 @@ class _InvitesScreenState extends State<InvitesScreen> {
   bool _creating = false;
   String? _error;
   String? _lastCreatedToken;
+
+  @override
+  Duration get refreshInterval => const Duration(seconds: 30);
+
+  @override
+  Future<void> performRefresh() => _refresh(silent: true);
 
   @override
   void initState() {
@@ -38,11 +45,13 @@ class _InvitesScreenState extends State<InvitesScreen> {
     super.dispose();
   }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _refresh({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final raw = await widget.apiClient.listAdminInvites(limit: 100);
       if (!mounted) return;
@@ -54,13 +63,13 @@ class _InvitesScreenState extends State<InvitesScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        if (!silent) _error = e.message;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        if (!silent) _error = e.toString();
       });
     }
   }
@@ -155,12 +164,6 @@ class _InvitesScreenState extends State<InvitesScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Инвайты'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _refresh,
-          ),
-        ],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,

@@ -50,7 +50,7 @@ async def search_users_endpoint(
 @router.get("/{user_id}", response_model=UserPublicResponse)
 async def read_public_profile(
     user_id: int,
-    _user: Annotated[dict, Depends(get_current_user)],
+    user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[Database, Depends(get_db)],
 ) -> UserPublicResponse:
-    return await users_service.get_public_profile(db, user_id)
+    return await users_service.get_public_profile(db, int(user["id"]), user_id)

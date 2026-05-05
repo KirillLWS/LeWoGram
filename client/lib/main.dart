@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/storage/token_storage.dart';
+import 'package:lewogram_client/core/theme/theme_controller.dart';
 import 'package:lewogram_client/app/app.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 
@@ -21,6 +22,9 @@ void main() async {
   }
 
   final tokenStorage = TokenStorage();
+  final themeController = ThemeController();
+  await themeController.load();
+
   final apiClient = ApiClient(
     tokenStorage: tokenStorage,
     onUnauthorized: () {
@@ -35,6 +39,7 @@ void main() async {
     AppScope(
       tokenStorage: tokenStorage,
       apiClient: apiClient,
+      themeController: themeController,
       child: LeWoGramApp(
         navigatorKey: appNavigatorKey,
         apiClient: apiClient,

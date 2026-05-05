@@ -12,6 +12,7 @@ import aiosqlite
 from app.config.config import AVATAR_MAX_BYTES, USER_ABOUT_MAX_LEN, media_dir
 from app.database.database import Database
 from app.users.schemas import PatchUserMeRequest, UserMeResponse, UserPublicResponse, UserSearchResult
+from app.friends.service import get_status_response
 
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.]{3,32}$")
 _ALLOWED_AVATAR_EXT = frozenset({"jpg", "jpeg", "png", "webp"})
@@ -150,11 +151,14 @@ async def search_users(db: Database, current_user_id: int, q: str) -> list[UserS
     return [UserSearchResult.model_validate(r) for r in rows]
 
 
-async def get_public_profile(db: Database, user_id: int) -> UserPublicResponse:
+async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> UserPublicResponse:
     row = await db.get_user_public_profile(user_id)
     if row is None or int(row.get("is_blocked", 0)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
     d = {k: row[k] for k in ("id", "username", "display_name", "about", "avatar_path")}
+    st = await get_status_response(db, viewer_id, user_id)
+    d["relation_to_me"] = st.relation
+    d["friend_request_id"] = st.request_id
     return UserPublicResponse.model_validate(d)
 
 

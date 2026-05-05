@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:lewogram_client/core/network/api_client.dart';
+
 import 'package:lewogram_client/app/app_scope.dart';
+import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/core/onboarding/onboarding_prefs.dart';
+import 'package:lewogram_client/core/storage/account_storage.dart';
 
 /// Заставка: проверка токена и маршрут на вход или домашнюю оболочку.
 class SessionGate extends StatefulWidget {
@@ -29,9 +32,16 @@ class _SessionGateState extends State<SessionGate> {
     }
 
     try {
-      await scope.apiClient.getMe();
+      final me = await scope.apiClient.getMe();
+      await AccountStorage.upsert(me);
       if (!mounted) return;
-      nav.pushReplacementNamed('/home');
+      final onboardingDone = await OnboardingPrefs.isDone();
+      if (!mounted) return;
+      if (!onboardingDone) {
+        nav.pushReplacementNamed('/onboarding-permissions');
+      } else {
+        nav.pushReplacementNamed('/home');
+      }
     } on UnauthorizedException catch (_) {
       if (!mounted) return;
       await scope.tokenStorage.clearToken();

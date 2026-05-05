@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/core/device/device_fingerprint.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/core/onboarding/onboarding_prefs.dart';
 import 'package:lewogram_client/core/push/push_service.dart';
+import 'package:lewogram_client/core/storage/account_storage.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 /// Регистрация по инвайту: POST /auth/register.
 class RegisterScreen extends StatefulWidget {
@@ -76,17 +78,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final scope = AppScope.of(context);
 
     try {
-      await scope.apiClient.register(
+      final reg = await scope.apiClient.register(
         inviteToken: invite,
         login: login,
         password: password,
         deviceFingerprint: fp,
         displayName: displayName.isEmpty ? null : displayName,
       );
-      await scope.apiClient.getMe();
+      if (!mounted) return;
+
+      final phrase = reg['recovery_phrase'] as String?;
+      if (phrase != null && phrase.isNotEmpty) {
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Сохраните фразу восстановления'),
+            content: SingleChildScrollView(
+              child: SelectableText(phrase),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Я сохранил фразу'),
+              ),
+            ],
+          ),
+        );
+      }
+
+      final me = await scope.apiClient.getMe();
+      await AccountStorage.upsert(me);
       await PushService.initAndGetToken(scope.apiClient);
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/home');
+      final onboardingDone = await OnboardingPrefs.isDone();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(
+        onboardingDone ? '/home' : '/onboarding-permissions',
+      );
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {

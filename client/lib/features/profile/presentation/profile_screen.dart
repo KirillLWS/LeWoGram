@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/developer/presentation/developer_hub_screen.dart';
 import 'package:lewogram_client/features/profile/data/profile_user.dart';
@@ -27,6 +28,7 @@ class ProfileScreen extends StatefulWidget {
     this.invitesEligibility,
     this.onOpenInvites,
     this.onOpenOwnerClaim,
+    this.onOpenDeviceTransferPending,
   });
 
   final ApiClient apiClient;
@@ -43,8 +45,8 @@ class ProfileScreen extends StatefulWidget {
   /// «Сменить аватар»: выбор файла; возвращает локальный путь или `null` при отмене.
   final PickAvatarCallback? onPickAvatar;
 
-  /// После успешного выбора файла (локальный путь).
-  final void Function(String localPath)? onAvatarPicked;
+  /// После успешного выбора файла (локальный путь): загрузка на сервер и т.п.
+  final Future<void> Function(String localPath)? onAvatarPicked;
 
   /// Сохранение полей профиля из модалки редактирования.
   final Future<void> Function(String displayName, String username, String about)? onSaveProfile;
@@ -67,6 +69,9 @@ class ProfileScreen extends StatefulWidget {
   /// Открыть экран управления инвайтами.
   final VoidCallback? onOpenInvites;
 
+  /// Перейти к списку запросов на смену устройства (owner / chief_admin).
+  final VoidCallback? onOpenDeviceTransferPending;
+
   /// Перейти к одноразовому claim владельца ([OwnerClaimScreen]).
   final VoidCallback? onOpenOwnerClaim;
 
@@ -74,7 +79,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
   ProfileUser? _user;
   bool _loading = true;
   bool _loggingOut = false;
@@ -82,6 +87,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _error;
   late List<String> _roles;
   bool _loadingRoles = false;
+
+  @override
+  Duration get refreshInterval => const Duration(seconds: 60);
+
+  @override
+  Future<void> performRefresh() => _loadMe(silent: true);
 
   String? _effectiveAvatarRef(ProfileUser user) {
     final o = widget.avatarUrlOverride?.trim();
@@ -114,11 +125,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _loadMe() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _loadMe({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final raw = await widget.apiClient.getMe();
       if (!mounted) return;
@@ -131,19 +144,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        if (!silent) _error = e.message;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        if (!silent) _error = e.message;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        if (!silent) _error = e.toString();
       });
     }
   }
@@ -192,7 +205,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final path = await fn();
       if (!mounted) return;
       if (path != null && path.trim().isNotEmpty) {
-        widget.onAvatarPicked?.call(path.trim());
+        final trimmed = path.trim();
+        final upload = widget.onAvatarPicked;
+        if (upload != null) {
+          try {
+            await upload(trimmed);
+          } on ApiException catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(e.message)),
+              );
+            }
+          }
+        }
+        if (mounted) await _loadMe();
       }
     } finally {
       if (mounted) setState(() => _pickingAvatar = false);
@@ -214,11 +240,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               tooltip: 'Редактировать',
               onPressed: _loading ? null : () => _handleEdit(_user!),
             ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обновить',
-            onPressed: _loading ? null : _loadMe,
-          ),
         ],
       ),
       body: SafeArea(
@@ -457,6 +478,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                                 Divider(height: 1, color: scheme.outlineVariant),
                               ],
+                              if (widget.invitesEligibility != null &&
+                                  widget.onOpenDeviceTransferPending != null &&
+                                  !_loadingRoles &&
+                                  widget.invitesEligibility!(_roles)) ...[
+                                ListTile(
+                                  leading: Icon(
+                                    Icons.phonelink_setup_outlined,
+                                    color: scheme.primary,
+                                  ),
+                                  title: const Text('Запросы смены устройства'),
+                                  subtitle: const Text(
+                                    'Подтвердить или отклонить вход с нового устройства',
+                                  ),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: widget.onOpenDeviceTransferPending,
+                                ),
+                                Divider(height: 1, color: scheme.outlineVariant),
+                              ],
                               ListTile(
                                 leading: Icon(Icons.history_outlined, color: scheme.primary),
                                 title: const Text('История назначения ролей'),
@@ -467,6 +506,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       builder: (_) => const RoleHistoryPlaceholderScreen(),
                                     ),
                                   );
+                                },
+                              ),
+                              Divider(height: 1, color: scheme.outlineVariant),
+                              ListTile(
+                                leading: Icon(Icons.settings_outlined, color: scheme.primary),
+                                title: const Text('Настройки'),
+                                subtitle: const Text('Тема оформления'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () {
+                                  Navigator.of(context).pushNamed('/settings');
                                 },
                               ),
                               Divider(height: 1, color: scheme.outlineVariant),

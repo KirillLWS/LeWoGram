@@ -1,4 +1,7 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import 'package:lewogram_client/core/config/app_config.dart';
 
 /// First visible character of [title], uppercased, for letter fallback avatars.
 String chatAvatarLetter(String title) {
@@ -9,7 +12,7 @@ String chatAvatarLetter(String title) {
   return String.fromCharCode(it.current).toUpperCase();
 }
 
-/// Returns an absolute `http`/`https` URL suitable for [Image.network], or `null`.
+/// Returns an absolute `http`/`https` URL for кэшируемого изображения, или `null`.
 String? resolveChatAvatarNetworkUrl(String? path) {
   if (path == null) return null;
   final s = path.trim();
@@ -24,10 +27,15 @@ String? resolveChatAvatarNetworkUrl(String? path) {
     final u = Uri.tryParse('https:$s');
     if (u != null && u.hasScheme) return u.toString();
   }
+  if (!s.contains('://')) {
+    final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final sub = s.startsWith('/') ? s.substring(1) : s;
+    return Uri.parse('$base/$sub').toString();
+  }
   return null;
 }
 
-/// Circular avatar: network image when [avatarPath] resolves to a URL, else [letter].
+/// Circular avatar: cached network image when [avatarPath] resolves to a URL, else [letter].
 class ChatAvatarCircle extends StatelessWidget {
   const ChatAvatarCircle({
     super.key,
@@ -46,6 +54,8 @@ class ChatAvatarCircle extends StatelessWidget {
     final cs = theme.colorScheme;
     final url = resolveChatAvatarNetworkUrl(avatarPath);
     final side = radius * 2;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final memW = (side * dpr).round();
 
     if (url != null) {
       return CircleAvatar(
@@ -53,29 +63,28 @@ class ChatAvatarCircle extends StatelessWidget {
         backgroundColor: cs.primaryContainer,
         foregroundColor: cs.onPrimaryContainer,
         child: ClipOval(
-          child: Image.network(
-            url,
+          child: CachedNetworkImage(
+            imageUrl: url,
             width: side,
             height: side,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _letterFallback(
+            memCacheWidth: memW,
+            fadeInDuration: Duration.zero,
+            placeholder: (_, __) => Center(
+              child: SizedBox(
+                width: radius,
+                height: radius,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: cs.primary,
+                ),
+              ),
+            ),
+            errorWidget: (_, __, ___) => _letterFallback(
               theme: theme,
               cs: cs,
               letter: letter,
             ),
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return Center(
-                child: SizedBox(
-                  width: radius,
-                  height: radius,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: cs.primary,
-                  ),
-                ),
-              );
-            },
           ),
         ),
       );

@@ -32,10 +32,45 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """JWT access token (OAuth2 password flow стиль)."""
+    """Пара access + refresh (OAuth2-подобный ответ)."""
 
     access_token: str
+    refresh_token: str
+    expires_in: int
     token_type: str = "bearer"
+
+
+class RegisterResponse(TokenResponse):
+    """Ответ регистрации: токены + фраза восстановления (показать один раз)."""
+
+    recovery_phrase: str
+
+
+class RefreshRequest(BaseModel):
+    """Обновление access по refresh (ротация refresh)."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    refresh_token: str = Field(..., min_length=1)
+
+
+class LogoutRequest(BaseModel):
+    """Выход с одного устройства по refresh-токену."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    refresh_token: str = Field(..., min_length=1)
+
+
+class AuthSessionResponse(BaseModel):
+    """Активная сессия для списка в UI."""
+
+    id: int
+    device_model: str | None = None
+    device_os: str | None = None
+    ip_address: str | None = None
+    last_used_at: str | None = None
+    created_at: str | None = None
 
 
 class UserResponse(BaseModel):

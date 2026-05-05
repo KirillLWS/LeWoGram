@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/network/api_client.dart';
 
 import '../data/user_public_profile.dart';
 import '../data/user_search_result.dart';
@@ -21,12 +22,14 @@ typedef UserPublicProfileLoader = Future<UserPublicProfile> Function(
 class UserSearchScreen extends StatefulWidget {
   const UserSearchScreen({
     super.key,
+    required this.apiClient,
     required this.onSearch,
     required this.onWrite,
     this.loadPublicProfile,
     this.debounce = const Duration(milliseconds: 400),
   });
 
+  final ApiClient apiClient;
   final UserSearchQueryCallback onSearch;
 
   /// Создание/открытие директа для выбранного пользователя.
@@ -108,6 +111,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
         MaterialPageRoute<void>(
           builder: (context) => UserProfileScreen(
             profile: profile,
+            apiClient: widget.apiClient,
             onWrite: widget.onWrite,
           ),
         ),

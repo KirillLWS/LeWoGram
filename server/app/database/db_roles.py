@@ -23,6 +23,20 @@ def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
+async def list_user_ids_with_any_role(db_path: Path, roles: tuple[str, ...]) -> list[int]:
+    if not roles:
+        return []
+    placeholders = ",".join("?" * len(roles))
+    sql = f"""
+        SELECT DISTINCT user_id FROM user_roles
+        WHERE role IN ({placeholders})
+    """
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(sql, tuple(roles)) as cur:
+            rows = await cur.fetchall()
+    return [int(r[0]) for r in rows]
+
+
 async def list_user_roles(db_path: Path, user_id: int) -> list[str]:
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(

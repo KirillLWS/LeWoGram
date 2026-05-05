@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/core/device/device_fingerprint.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/core/onboarding/onboarding_prefs.dart';
 import 'package:lewogram_client/core/push/push_service.dart';
+import 'package:lewogram_client/core/storage/account_storage.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 
 /// Экран входа: логин/пароль, индикатор загрузки, текст ошибки.
@@ -76,10 +78,24 @@ class _LoginScreenState extends State<LoginScreen> {
         deviceModel: _deviceModel,
         deviceOs: _deviceOs,
       );
-      await api.getMe();
+      final me = await api.getMe();
+      await AccountStorage.upsert(me);
       await PushService.initAndGetToken(api);
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/home');
+      final onboardingDone = await OnboardingPrefs.isDone();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(
+        onboardingDone ? '/home' : '/onboarding-permissions',
+      );
+    } on MustRequestTransferException catch (_) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(
+        '/device-transfer-request',
+        arguments: <String, dynamic>{
+          'login': login,
+          'password': password,
+        },
+      );
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {

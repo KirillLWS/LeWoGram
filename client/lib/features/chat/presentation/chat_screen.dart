@@ -1,6 +1,5 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
@@ -44,13 +43,18 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   final _textCtrl = TextEditingController();
   List<MessageItem> _messages = [];
   bool _loading = true;
   String? _error;
   int? _currentUserId;
-  Timer? _pollTimer;
+
+  @override
+  Duration get refreshInterval => const Duration(seconds: 4);
+
+  @override
+  Future<void> performRefresh() => _loadMessages(silent: true);
 
   /// После успешного переименования (или ввод пользователя до появления API).
   String? _titleOverride;
@@ -66,10 +70,6 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _currentUserId = widget.currentUserId;
     _initUserAndMessages();
-    _pollTimer = Timer.periodic(
-      const Duration(seconds: 4),
-      (_) => _loadMessages(silent: true),
-    );
   }
 
   String get _appBarTitle {
@@ -121,7 +121,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
     _textCtrl.dispose();
     super.dispose();
   }
@@ -322,11 +321,6 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: 'Переименовать',
             onPressed: _showRenameDialog,
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обновить',
-            onPressed: () => _loadMessages(),
-          ),
         ],
       ),
       body: Column(
@@ -342,10 +336,13 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: _loading && _messages.isEmpty
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
+                : RefreshIndicator(
+                    onRefresh: _loadMessages,
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
                       final m = _messages[index];
                       final isMine = _isOwnMessage(m);
                       final text = m.text ?? '';
@@ -419,6 +416,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       );
                     },
                   ),
+                ),
           ),
           SafeArea(
             child: Padding(

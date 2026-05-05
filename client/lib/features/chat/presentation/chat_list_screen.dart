@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
@@ -22,10 +23,16 @@ class ChatListScreen extends StatefulWidget {
   State<ChatListScreen> createState() => _ChatListScreenState();
 }
 
-class _ChatListScreenState extends State<ChatListScreen> {
+class _ChatListScreenState extends State<ChatListScreen> with AutoRefreshMixin {
   List<ChatItem> _chats = [];
   bool _loading = true;
   String? _error;
+
+  @override
+  Duration get refreshInterval => const Duration(seconds: 8);
+
+  @override
+  Future<void> performRefresh() => _loadChats(silent: true);
 
   @override
   void initState() {
@@ -34,11 +41,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   /// Загрузка списка с сервера ([ApiClient.getChats]).
-  Future<void> _loadChats() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  /// При [silent] не включается полноэкранный индикатор (фоновое обновление).
+  Future<void> _loadChats({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final raw = await widget.apiClient.getChats();
       if (!mounted) return;
@@ -56,13 +66,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        if (!silent) _error = e.message;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        if (!silent) _error = e.toString();
       });
     }
   }
@@ -98,13 +108,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
             letterSpacing: -0.25,
           ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обновить',
-            onPressed: _loading ? null : _loadChats,
-          ),
-        ],
       ),
       floatingActionButton: widget.onStartChat == null
           ? null

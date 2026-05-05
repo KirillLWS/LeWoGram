@@ -7,19 +7,34 @@ class UserPublicProfile {
     required this.username,
     this.displayName,
     this.about,
+    this.avatarPath,
+    this.relationToMe,
+    this.friendRequestId,
   });
 
   final int id;
   final String username;
   final String? displayName;
   final String? about;
+  final String? avatarPath;
+
+  /// Из [GET /users/{id}] при наличии (опционально).
+  final String? relationToMe;
+  final int? friendRequestId;
 
   factory UserPublicProfile.fromJson(Map<String, dynamic> json) {
+    int? reqId;
+    final fr = json['friend_request_id'];
+    if (fr is num) reqId = fr.toInt();
+
     return UserPublicProfile(
       id: (json['id'] as num).toInt(),
       username: json['username'] as String? ?? '',
       displayName: json['display_name'] as String?,
       about: json['about'] as String?,
+      avatarPath: json['avatar_path'] as String?,
+      relationToMe: json['relation_to_me'] as String?,
+      friendRequestId: reqId,
     );
   }
 
@@ -38,5 +53,8 @@ class UserPublicProfile {
         'username': username,
         'display_name': displayName,
         'about': about,
+        if (avatarPath != null) 'avatar_path': avatarPath,
+        if (relationToMe != null) 'relation_to_me': relationToMe,
+        if (friendRequestId != null) 'friend_request_id': friendRequestId,
       };
 }

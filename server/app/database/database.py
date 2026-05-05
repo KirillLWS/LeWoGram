@@ -34,6 +34,11 @@ class Database:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
 
+    @property
+    def db_path(self) -> Path:
+        """Путь к файлу SQLite (низкоуровневые модули: friends, roles, …)."""
+        return self._db_path
+
     async def init_db(self) -> None:
         """Создаёт каталог для файла БД, применяет schema.sql и безопасные миграции."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,12 +48,22 @@ class Database:
             await db.commit()
         await self._migrate_users_username()
         await self._migrate_invite_link_extras()
+        await self._migrate_users_recovery_phrase()
         from app.database.roles_migrations import apply_roles_migrations
 
         await apply_roles_migrations(self._db_path)
         from app.database.push_migrations import apply_push_migrations
 
         await apply_push_migrations(self._db_path)
+        from app.database.friends_migrations import apply_friends_migrations
+
+        await apply_friends_migrations(self._db_path)
+        from app.database.auth_sessions_migrations import apply_auth_sessions_migrations
+
+        await apply_auth_sessions_migrations(self._db_path)
+        from app.database.device_transfer_migrations import apply_device_transfer_migrations
+
+        await apply_device_transfer_migrations(self._db_path)
         logger.info("База инициализирована: %s", self._db_path)
 
     async def _migrate_users_username(self) -> None:
@@ -102,6 +117,17 @@ class Database:
                 """,
             )
             await db.commit()
+
+    async def _migrate_users_recovery_phrase(self) -> None:
+        """Колонка recovery_phrase_hash для BIP39-фразы (опционально при регистрации)."""
+        async with aiosqlite.connect(self._db_path) as db:
+            async with db.execute("PRAGMA table_info(users)") as cur:
+                cols = {str(row[1]) for row in await cur.fetchall()}
+            if "recovery_phrase_hash" not in cols:
+                await db.execute(
+                    "ALTER TABLE users ADD COLUMN recovery_phrase_hash TEXT",
+                )
+                await db.commit()
 
     async def get_user_by_login(self, login: str) -> dict[str, Any] | None:
         async with aiosqlite.connect(self._db_path) as db:
@@ -238,16 +264,29 @@ class Database:
         password_hash: str,
         fingerprint: str | None,
         display_name: str | None = None,
+        recovery_phrase_hash: str | None = None,
     ) -> int:
         login_clean = login.strip()
         async with aiosqlite.connect(self._db_path) as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO users (login, username, password_hash, device_fingerprint, display_name)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (login_clean, login_clean, password_hash, fingerprint, display_name),
-            )
+            if recovery_phrase_hash is not None:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO users (
+                        login, username, password_hash, device_fingerprint,
+                        display_name, recovery_phrase_hash
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (login_clean, login_clean, password_hash, fingerprint, display_name, recovery_phrase_hash),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO users (login, username, password_hash, device_fingerprint, display_name)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (login_clean, login_clean, password_hash, fingerprint, display_name),
+                )
             await db.commit()
             new_id = int(cursor.lastrowid)
         from app.database.db_roles import ensure_default_user_role

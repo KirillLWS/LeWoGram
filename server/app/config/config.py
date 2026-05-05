@@ -27,8 +27,11 @@ if not _SECRET_KEY_RAW:
     )
 SECRET_KEY: str = _SECRET_KEY_RAW
 
-# Срок жизни access-токена в минутах (7 суток = 7 * 24 * 60).
-ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
+# Срок жизни access JWT в минутах (по умолчанию 15).
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+
+# Refresh-токен (срок строки в БД), дней.
+REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 # Профиль / аватар (users).
 USER_ABOUT_MAX_LEN: int = 2000

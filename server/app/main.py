@@ -23,7 +23,9 @@ from app.admin.invites_router import router as admin_invites_router
 from app.admin.roles_router import router as admin_roles_router
 from app.auth.router import router as auth_router
 from app.config import BACKUP_PATH, DATABASE_PATH, MEDIA_PATH
+from app.device_transfer.router import router as device_transfer_router
 from app.database.database import Database
+from app.friends.router import router as friends_router
 from app.messages.router import router as messages_router
 from app.owner.router import router as owner_router
 from app.push.router import router as push_router
@@ -68,8 +70,10 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/auth")
+app.include_router(device_transfer_router, prefix="/device-transfer")
 app.include_router(messages_router, prefix="/messages")
 app.include_router(users_router, prefix="/users")
+app.include_router(friends_router, prefix="/friends")
 app.include_router(push_router, prefix="/push")
 app.include_router(owner_router, prefix="/owner")
 app.include_router(admin_roles_router, prefix="/admin")
