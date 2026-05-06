@@ -17,3 +17,6 @@ Self-hosted on Raspberry Pi.
 
 ## Self-hosted
 Your data. Your server. Your rules.
+
+<!-- Repo access check: confirmed write access from Claude. -->
+
