@@ -743,9 +743,19 @@ class ApiClient {
   }
 
   /// [POST /messages/support/tickets] — создать новый тикет поддержки.
-  Future<Map<String, dynamic>> createSupportTicket({String? subject}) async {
+  /// Если переданы [diagnosticBody]/[clientMeta], они прикрепятся к тикету
+  /// (запись в support_diagnostic_logs + первое системное сообщение).
+  Future<Map<String, dynamic>> createSupportTicket({
+    String? subject,
+    String? diagnosticBody,
+    String? clientMeta,
+  }) async {
     final uri = _uri('/messages/support/tickets');
-    final body = jsonEncode({if (subject != null) 'subject': subject});
+    final body = jsonEncode({
+      if (subject != null) 'subject': subject,
+      if (diagnosticBody != null) 'body': diagnosticBody,
+      if (clientMeta != null) 'client_meta': clientMeta,
+    });
     final resp = await _authorizedJsonRequest(
       (headers) => _http.post(
         uri,

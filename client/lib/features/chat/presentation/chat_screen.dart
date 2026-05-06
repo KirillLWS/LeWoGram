@@ -7,6 +7,7 @@ import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 import 'package:lewogram_client/features/users/data/user_public_profile.dart';
+import 'package:lewogram_client/features/owner/presentation/owner_user_live_geo_screen.dart';
 import 'package:lewogram_client/features/users/presentation/user_profile_screen.dart';
 
 bool _userPublicMapIndicatesBanned(Map<String, dynamic> raw) {
@@ -298,6 +299,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       widget.chatType?.trim().toLowerCase() == 'support_ticket';
 
   Map<String, dynamic>? _ticket;
+  Set<String> _myRoles = const {};
 
   Future<void> _loadTicketStatus() async {
     if (!_isSupportTicket()) return;
@@ -308,6 +310,14 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     } catch (_) {
       // молча: баннер просто не появится
     }
+    try {
+      final me = await widget.apiClient.getMe();
+      final roles = (me['roles'] as List? ?? const [])
+          .map((e) => e.toString().toLowerCase())
+          .toSet();
+      if (!mounted) return;
+      setState(() => _myRoles = roles);
+    } catch (_) {}
   }
 
   Future<void> _markTicket(String state) async {
@@ -421,16 +431,34 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                         ? 'Открыть со своей стороны'
                         : 'Закрыть со своей стороны'),
                   ),
-                OutlinedButton.icon(
-                  onPressed: () =>
-                      _finalizeTicket(finalized ? 'reopen' : 'close'),
-                  icon: Icon(finalized
-                      ? Icons.refresh
-                      : Icons.gavel_outlined),
-                  label: Text(finalized
-                      ? 'Реоткрыть (chief/owner)'
-                      : 'Финальное закрытие (chief/owner)'),
-                ),
+                if (_myRoles.contains('chief_admin') ||
+                    _myRoles.contains('owner'))
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _finalizeTicket(finalized ? 'reopen' : 'close'),
+                    icon: Icon(finalized
+                        ? Icons.refresh
+                        : Icons.gavel_outlined),
+                    label: Text(finalized
+                        ? 'Реоткрыть (final)'
+                        : 'Финальное закрытие'),
+                  ),
+                if (_myRoles.contains('owner') && requesterId != null)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => OwnerUserLiveGeoScreen(
+                            apiClient: widget.apiClient,
+                            userId: requesterId,
+                            displayLabel: 'user $requesterId',
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.my_location_outlined),
+                    label: const Text('Лайв-гео автора'),
+                  ),
               ],
             ),
           ],

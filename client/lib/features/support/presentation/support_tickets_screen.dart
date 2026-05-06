@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
+import 'package:lewogram_client/core/device/support_telemetry.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
 
@@ -56,39 +59,87 @@ class _SupportTicketsScreenState extends State<SupportTicketsScreen> {
   }
 
   Future<void> _createTicket() async {
-    final ctl = TextEditingController();
+    final subjCtl = TextEditingController();
+    final descCtl = TextEditingController();
+    bool attachDiag = true;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Новый запрос в поддержку'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          maxLength: 120,
-          decoration: const InputDecoration(
-            labelText: 'Кратко опишите тему',
-            border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Новый запрос в поддержку'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: subjCtl,
+                  autofocus: true,
+                  maxLength: 120,
+                  decoration: const InputDecoration(
+                    labelText: 'Тема',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: descCtl,
+                  minLines: 3,
+                  maxLines: 6,
+                  maxLength: 4000,
+                  decoration: const InputDecoration(
+                    labelText: 'Описание проблемы (необязательно)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: attachDiag,
+                  onChanged: (v) => setSt(() => attachDiag = v ?? false),
+                  title: const Text('Прикрепить диагностику клиента'),
+                  subtitle: const Text(
+                    'Версия приложения, ОС, локаль и т.п. помогут быстрее решить проблему.',
+                  ),
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Создать'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Создать'),
-          ),
-        ],
       ),
     );
-    final subject = ctl.text.trim();
-    ctl.dispose();
+    final subject = subjCtl.text.trim();
+    final desc = descCtl.text.trim();
+    subjCtl.dispose();
+    descCtl.dispose();
     if (ok != true || !mounted) return;
+
+    String? clientMeta;
+    if (attachDiag) {
+      try {
+        final snap = await collectSupportTelemetrySnapshot();
+        clientMeta = jsonEncode(snap);
+      } catch (_) {
+        clientMeta = null;
+      }
+    }
+
     try {
       final api = AppScope.of(context).apiClient;
       final t = await api.createSupportTicket(
         subject: subject.isEmpty ? null : subject,
+        diagnosticBody: desc.isEmpty ? null : desc,
+        clientMeta: clientMeta,
       );
       if (!mounted) return;
       await _openTicket(t);

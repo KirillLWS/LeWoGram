@@ -45,10 +45,43 @@ async def _user_role_set(db: Database, user_id: int) -> set[str]:
     return {r.lower() for r in await list_user_roles(db.db_path, user_id)}
 
 
+def _format_meta_for_message(meta_json: str | None) -> str:
+    """Однострочное превью client_meta (без чувствительных полей)."""
+    if not meta_json:
+        return ""
+    import json as _json
+    try:
+        data = _json.loads(meta_json)
+        if not isinstance(data, dict):
+            return ""
+    except Exception:
+        return meta_json[:120]
+    keys = (
+        "platform", "os_version", "app_version", "device_model",
+        "device_os", "locale", "timezone",
+    )
+    parts: list[str] = []
+    for k in keys:
+        v = data.get(k)
+        if v not in (None, ""):
+            parts.append(f"{k}={v}")
+    if "geo_lat" in data and "geo_lng" in data:
+        parts.append(f"geo={data['geo_lat']:.4f},{data['geo_lng']:.4f}")
+    return "; ".join(parts)
+
+
 async def create_support_ticket(
-    db: Database, user_id: int, *, subject: str | None
+    db: Database,
+    user_id: int,
+    *,
+    subject: str | None,
+    body: str | None = None,
+    client_meta: str | None = None,
 ) -> dict[str, Any]:
-    """Создаёт новый тикет: чат типа support_ticket с участниками user + staff."""
+    """Создаёт новый тикет: чат типа support_ticket с участниками user + staff.
+    При наличии body/client_meta — пишет диагностику в support_diagnostic_logs
+    и постит первое системное сообщение в чат тикета.
+    """
     title = (subject or "").strip()[:120] or "Запрос в поддержку"
     staff_ids = await list_user_ids_with_any_role(
         db.db_path, tuple(OPERATIONAL_STAFF_ROLES)
@@ -90,6 +123,35 @@ async def create_support_ticket(
             "SELECT * FROM chats WHERE id = ?", (chat_id,)
         ) as c2:
             row = await c2.fetchone()
+
+    # Авто-прикрепление диагностики к тикету.
+    body_text = (body or "").strip()
+    if body_text or client_meta:
+        from app.database import db_support_diagnostics
+        try:
+            await db_support_diagnostics.insert_diagnostic_log(
+                db, user_id=user_id,
+                body=body_text or "(без описания)",
+                client_meta=client_meta,
+            )
+        except Exception:
+            logger.exception("ticket %s: diagnostic log insert failed", chat_id)
+        meta_summary = _format_meta_for_message(client_meta)
+        message_text_lines = ["[diagnostic]"]
+        if body_text:
+            message_text_lines.append(body_text)
+        if meta_summary:
+            message_text_lines.append(f"meta: {meta_summary}")
+        try:
+            await db.create_message(
+                chat_id=chat_id,
+                sender_id=user_id,
+                type="text",
+                text="\n".join(message_text_lines),
+            )
+        except Exception:
+            logger.exception("ticket %s: system message insert failed", chat_id)
+
     logger.info(
         "support ticket created chat=%s user=%s staff=%s",
         chat_id, user_id, len(staff_ids),

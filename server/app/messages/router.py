@@ -27,6 +27,8 @@ from app.messages import support_tickets
 
 class CreateSupportTicketRequest(BaseModel):
     subject: str | None = Field(default=None, max_length=120)
+    body: str | None = Field(default=None, max_length=4000)
+    client_meta: str | None = Field(default=None, max_length=8000)
 
 
 class TicketStateRequest(BaseModel):
@@ -123,7 +125,12 @@ async def create_support_ticket_endpoint(
 ) -> dict:
     """Создать новый тикет поддержки. Все админы и владелец автоматически получают доступ."""
     uid = int(user["id"])
-    return await support_tickets.create_support_ticket(db, uid, subject=body.subject)
+    return await support_tickets.create_support_ticket(
+        db, uid,
+        subject=body.subject,
+        body=body.body,
+        client_meta=body.client_meta,
+    )
 
 
 @router.get("/support/tickets/mine")
