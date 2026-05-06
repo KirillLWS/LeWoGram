@@ -56,7 +56,8 @@ class ApiClient {
 
   /// Таймаут для админ-обзора смены устройства (ожидание ответа сервера целиком,
   /// включая возможный refresh токена).
-  static const Duration deviceTransferAdminOverviewTimeout = Duration(seconds: 45);
+  static const Duration deviceTransferAdminOverviewTimeout =
+      Duration(seconds: 45);
 
   /// После сброса токена при 401 с Bearer (например навигация на `/login`).
   final UnauthorizedCallback? onUnauthorized;
@@ -83,8 +84,20 @@ class ApiClient {
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map<String, dynamic>) {
+        if (decoded['code']?.toString() == 'account_blocked') {
+          final r = decoded['reason']?.toString().trim();
+          if (r != null && r.isNotEmpty) return r;
+        }
         final detail = decoded['detail'];
         if (detail is String) return detail;
+        if (detail is Map) {
+          for (final k in ['message', 'msg', 'reason', 'error']) {
+            if (detail[k] != null) {
+              return detail[k].toString();
+            }
+          }
+          return jsonEncode(detail);
+        }
         if (detail is List && detail.isNotEmpty) {
           final first = detail.first;
           if (first is Map && first['msg'] != null) {
@@ -103,7 +116,8 @@ class ApiClient {
     return 'Ошибка сервера';
   }
 
-  Future<Map<String, String>> _jsonHeaders({bool includeBearerIfPresent = false}) async {
+  Future<Map<String, String>> _jsonHeaders(
+      {bool includeBearerIfPresent = false}) async {
     final h = <String, String>{
       'Content-Type': 'application/json; charset=utf-8',
     };
@@ -153,7 +167,8 @@ class ApiClient {
         }
         return false;
       }
-      final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      final data =
+          jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
       final access = data['access_token'] as String?;
       final next = data['refresh_token'] as String?;
       if (access == null || access.isEmpty) {
@@ -196,7 +211,6 @@ class ApiClient {
     }
     return resp;
   }
-
 
   /// Вход; при успехе сохраняет `access_token` в [TokenStorage].
   Future<Map<String, dynamic>> login({
@@ -712,7 +726,13 @@ class ApiClient {
           statusCode: resp.statusCode,
         );
       }
-      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on AccountBannedException {
+      rethrow;
     } on SocketException catch (e) {
       throw ApiException('Нет сети: ${e.message}');
     } on http.ClientException catch (e) {
@@ -723,7 +743,8 @@ class ApiClient {
   }
 
   /// [GET /owner/server-chats] — только owner. [limit] макс. 100, [offset] пагинация.
-  Future<List<dynamic>> ownerServerChats({int limit = 50, int offset = 0}) async {
+  Future<List<dynamic>> ownerServerChats(
+      {int limit = 50, int offset = 0}) async {
     final uri = _uri('/owner/server-chats', {
       'limit': '$limit',
       'offset': '$offset',
@@ -761,7 +782,8 @@ class ApiClient {
     try {
       final resp = await _http.get(uri);
       if (resp.statusCode != 200) {
-        throw ApiException('HTTP ${resp.statusCode}', statusCode: resp.statusCode);
+        throw ApiException('HTTP ${resp.statusCode}',
+            statusCode: resp.statusCode);
       }
       final data = jsonDecode(utf8.decode(resp.bodyBytes));
       if (data is Map<String, dynamic>) return data;
@@ -962,9 +984,17 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> sendText(int chatId, String text) async {
+  Future<Map<String, dynamic>> sendText(
+    int chatId,
+    String text, {
+    int? replyToId,
+  }) async {
     final uri = _uri('/messages/send-text');
-    final body = jsonEncode({'chat_id': chatId, 'text': text});
+    final body = jsonEncode({
+      'chat_id': chatId,
+      'text': text,
+      if (replyToId != null) 'reply_to_id': replyToId,
+    });
     try {
       final resp = await _authorizedJsonRequest(
         (headers) => _http.post(uri, headers: headers, body: body),
@@ -982,6 +1012,312 @@ class ApiClient {
       throw ApiException('Сеть: ${e.message}');
     } on FormatException catch (e) {
       throw ApiException('Неверный JSON отправки: ${e.message}');
+    }
+  }
+
+  /// Глобальный чат поддержки ([GET /messages/support/chat]).
+  Future<Map<String, dynamic>> getSupportChat() async {
+    final uri = _uri('/messages/support/chat');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON чата поддержки: ${e.message}');
+    }
+  }
+
+  /// Диагностика для поддержки ([POST /users/me/support-diagnostic]).
+  Future<Map<String, dynamic>> submitSupportDiagnostic({
+    required String body,
+    Map<String, dynamic>? clientMeta,
+  }) async {
+    final uri = _uri('/users/me/support-diagnostic');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'body': body,
+            if (clientMeta != null) 'client_meta': clientMeta,
+          }),
+        ),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Текущий статус временного доступа поддержки ([GET /users/me/support-access]).
+  Future<Map<String, dynamic>> getMySupportAccess() async {
+    final uri = _uri('/users/me/support-access');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Включить временный доступ поддержки ([POST /users/me/support-access/grant]).
+  Future<Map<String, dynamic>> grantMySupportAccess({int minutes = 30}) async {
+    final uri = _uri('/users/me/support-access/grant');
+    final body = jsonEncode({'minutes': minutes});
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(uri, headers: headers, body: body),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Отключить временный доступ поддержки ([POST /users/me/support-access/revoke]).
+  Future<Map<String, dynamic>> revokeMySupportAccess() async {
+    final uri = _uri('/users/me/support-access/revoke');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(uri, headers: headers, body: '{}'),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Журнал диагностики ([GET /admin/support/diagnostics]) — chief_admin / owner.
+  Future<List<dynamic>> adminSupportDiagnostics({
+    int limit = 50,
+    int offset = 0,
+    int? userId,
+  }) async {
+    final uri = _uri('/admin/support/diagnostics', {
+      'limit': '$limit',
+      'offset': '$offset',
+      if (userId != null) 'user_id': '$userId',
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is List<dynamic>) return decoded;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Серверные логи входов ([GET /admin/support/login-logs]) — только owner.
+  Future<List<dynamic>> ownerSupportLoginLogs({
+    int limit = 50,
+    int offset = 0,
+    int? userId,
+  }) async {
+    final uri = _uri('/admin/support/login-logs', {
+      'limit': '$limit',
+      'offset': '$offset',
+      if (userId != null) 'user_id': '$userId',
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is List<dynamic>) return decoded;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Активные согласия на диагностику ([GET /admin/support/access-sessions]) — только owner.
+  Future<List<dynamic>> ownerSupportAccessSessions({
+    int limit = 50,
+    int offset = 0,
+    int? userId,
+  }) async {
+    final uri = _uri('/admin/support/access-sessions', {
+      'limit': '$limit',
+      'offset': '$offset',
+      if (userId != null) 'user_id': '$userId',
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is List<dynamic>) return decoded;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Журнал аудита ([GET /admin/audit/events]) — chief_admin / owner.
+  Future<List<dynamic>> adminAuditEvents({
+    int limit = 50,
+    int offset = 0,
+    int? userId,
+  }) async {
+    final q = <String, String>{
+      'limit': '$limit',
+      'offset': '$offset',
+      if (userId != null) 'user_id': '$userId',
+    };
+    final uri = _uri('/admin/audit/events', q);
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is List<dynamic>) return decoded;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// Сброс сессий пользователя ([POST /admin/users/{id}/revoke-sessions]).
+  Future<Map<String, dynamic>> adminRevokeUserSessions(int userId) async {
+    final uri = _uri('/admin/users/$userId/revoke-sessions');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(uri, headers: headers, body: '{}'),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
     }
   }
 
@@ -1267,7 +1603,9 @@ class ApiClient {
       final resp = await _authorizedJsonRequest(
         (headers) => _http.post(uri, headers: headers),
       );
-      if (resp.statusCode != 200 && resp.statusCode != 201 && resp.statusCode != 204) {
+      if (resp.statusCode != 200 &&
+          resp.statusCode != 201 &&
+          resp.statusCode != 204) {
         throw ApiException(
           _extractErrorMessage(resp.body),
           statusCode: resp.statusCode,
@@ -1349,7 +1687,9 @@ class ApiClient {
       final resp = await _authorizedJsonRequest(
         (headers) => _http.post(uri, headers: headers),
       );
-      if (resp.statusCode != 200 && resp.statusCode != 201 && resp.statusCode != 204) {
+      if (resp.statusCode != 200 &&
+          resp.statusCode != 201 &&
+          resp.statusCode != 204) {
         throw ApiException(
           _extractErrorMessage(resp.body),
           statusCode: resp.statusCode,
@@ -1489,6 +1829,97 @@ class ApiClient {
       throw ApiException('Сеть: ${e.message}');
     } on FormatException catch (e) {
       throw ApiException('Неверный JSON разбана: ${e.message}');
+    }
+  }
+
+  /// [GET /admin/users/{id}/roles]
+  Future<Map<String, dynamic>> adminGetUserRoles(int userId) async {
+    final uri = _uri('/admin/users/$userId/roles');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON ролей: ${e.message}');
+    }
+  }
+
+  /// [POST /admin/users/{id}/grant-role] — выдаёт роль (на сервере сводится к одной primary).
+  Future<Map<String, dynamic>> adminGrantUserRole(
+      int userId, String role) async {
+    final uri = _uri('/admin/users/$userId/grant-role');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({'role': role}),
+        ),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
+    }
+  }
+
+  /// [POST /admin/users/{id}/revoke-role]
+  Future<Map<String, dynamic>> adminRevokeUserRole(
+      int userId, String role) async {
+    final uri = _uri('/admin/users/$userId/revoke-role');
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({'role': role}),
+        ),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException('Неверный ответ сервера');
+      }
+      return decoded;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный JSON: ${e.message}');
     }
   }
 

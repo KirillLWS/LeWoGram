@@ -6,6 +6,7 @@ import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/onboarding/onboarding_prefs.dart';
 import 'package:lewogram_client/core/push/push_service.dart';
 import 'package:lewogram_client/core/storage/account_storage.dart';
+import 'package:lewogram_client/core/storage/saved_accounts_storage.dart';
 import 'package:lewogram_client/features/auth/presentation/account_banned_dialog.dart';
 
 /// Экран входа: логин/пароль, индикатор загрузки, текст ошибки.
@@ -23,16 +24,28 @@ class _LoginScreenState extends State<LoginScreen> {
   final _loginCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _fingerprint = DeviceFingerprint();
+  final SavedAccountsStorage _savedStorage = SavedAccountsStorage();
 
   bool _loading = false;
   bool _fpReady = false;
   String? _deviceFingerprint;
   String? _error;
+  bool _rememberMe = false;
+  List<SavedAccountRow> _saved = [];
 
   @override
   void initState() {
     super.initState();
     _loadFingerprint();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _refreshSavedList();
+    });
+  }
+
+  Future<void> _refreshSavedList() async {
+    final rows = await _savedStorage.listRows();
+    if (!mounted) return;
+    setState(() => _saved = rows);
   }
 
   Future<void> _loadFingerprint() async {
@@ -49,6 +62,130 @@ class _LoginScreenState extends State<LoginScreen> {
     _loginCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _maybePersistSession(String login, Map<String, dynamic> me) async {
+    if (!_rememberMe) return;
+    final ts = AppScope.of(context).tokenStorage;
+    final access = await ts.readToken();
+    final refresh = await ts.readRefreshToken();
+    if (access == null ||
+        refresh == null ||
+        access.isEmpty ||
+        refresh.isEmpty) {
+      return;
+    }
+    final dn = me['display_name']?.toString().trim();
+    final un = me['username']?.toString().trim();
+    final label = (dn != null && dn.isNotEmpty)
+        ? dn
+        : ((un != null && un.isNotEmpty) ? un : login);
+    await _savedStorage.saveCurrentSession(
+      login: login,
+      accessToken: access,
+      refreshToken: refresh,
+      displayLabel: label,
+    );
+    await _refreshSavedList();
+  }
+
+  Future<void> _quickLogin(SavedAccountRow row) async {
+    final fp = _deviceFingerprint;
+    if (fp == null || !_fpReady) {
+      setState(() => _error = 'Подождите инициализации устройства');
+      return;
+    }
+    final tokens = await _savedStorage.readTokens(row.login);
+    if (tokens == null) {
+      setState(() => _error = 'Нет сохранённых токенов для этого логина');
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final api = AppScope.of(context).apiClient;
+    final ts = AppScope.of(context).tokenStorage;
+
+    try {
+      await ts.saveToken(tokens.access);
+      await ts.saveRefreshToken(tokens.refresh);
+      final me = await api.getMe();
+      await AccountStorage.upsert(me);
+      await PushService.initAndGetToken(api);
+      if (!mounted) return;
+      final onboardingDone = await OnboardingPrefs.isDone();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(
+        onboardingDone ? '/home' : '/onboarding-permissions',
+      );
+    } on AccountBannedException catch (e) {
+      if (!mounted) return;
+      await showAccountBannedDialog(context, e);
+    } on UnauthorizedException catch (_) {
+      await ts.clearToken();
+      await _savedStorage.remove(row.login);
+      await _refreshSavedList();
+      if (mounted) {
+        setState(() => _error = 'Сессия устарела — войдите паролем');
+      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openSavedAccountsManager() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'Сохранённые на устройстве',
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
+                ),
+                if (_saved.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('Список пуст'),
+                  )
+                else
+                  ..._saved.map(
+                    (r) => ListTile(
+                      title: Text(r.label ?? r.login),
+                      subtitle: Text(r.login),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          await _savedStorage.remove(r.login);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          await _refreshSavedList();
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _submit() async {
@@ -81,6 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
         deviceOs: _deviceOs,
       );
       final me = await api.getMe();
+      await _maybePersistSession(login, me);
       await AccountStorage.upsert(me);
       await PushService.initAndGetToken(api);
       if (!mounted) return;
@@ -117,6 +255,17 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Вход'),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (v) async {
+              if (v == 'manage') await _openSavedAccountsManager();
+            },
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(value: 'manage', child: Text('Управление сохранёнными')),
+            ],
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -179,6 +328,16 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                         enabled: !_loading,
                       ),
+                      CheckboxListTile(
+                        value: _rememberMe,
+                        onChanged: _loading
+                            ? null
+                            : (v) =>
+                                setState(() => _rememberMe = v ?? false),
+                        title: const Text('Запомнить на этом устройстве'),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     ],
                   ),
                 ),
@@ -204,6 +363,27 @@ class _LoginScreenState extends State<LoginScreen> {
                     : () => Navigator.of(context).pushNamed('/register'),
                 child: const Text('Нет аккаунта? Зарегистрироваться'),
               ),
+              if (_saved.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                Text(
+                  'Быстрый вход',
+                  style: theme.textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                ..._saved.map(
+                  (r) => Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: const Icon(Icons.login),
+                      title: Text(r.label ?? r.login),
+                      subtitle: Text(r.login),
+                      onTap: (_loading || !_fpReady)
+                          ? null
+                          : () => _quickLogin(r),
+                    ),
+                  ),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 Text(

@@ -31,6 +31,7 @@ class SendTextMessageRequest(BaseModel):
 
     chat_id: int = Field(..., gt=0)
     text: str = Field(..., min_length=1, max_length=16000)
+    reply_to_id: int | None = Field(default=None, gt=0)
 
 
 class MarkReadRequest(BaseModel):

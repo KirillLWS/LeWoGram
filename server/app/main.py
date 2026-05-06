@@ -24,6 +24,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.admin.invites_router import router as admin_invites_router
 from app.admin.roles_router import router as admin_roles_router
+from app.admin.audit_router import router as admin_audit_router
+from app.admin.support_router import router as admin_support_router
 from app.admin.users_moderation_router import router as admin_users_moderation_router
 from app.auth.router import router as auth_router
 from app.config import BACKUP_PATH, DATABASE_PATH, MEDIA_PATH
@@ -118,6 +120,8 @@ app.include_router(reports_router)
 app.include_router(owner_router, prefix="/owner")
 app.include_router(admin_roles_router, prefix="/admin")
 app.include_router(admin_invites_router, prefix="/admin")
+app.include_router(admin_support_router, prefix="/admin")
+app.include_router(admin_audit_router, prefix="/admin")
 app.include_router(admin_users_moderation_router, prefix="/admin")
 
 _media_root = (_SERVER_ROOT / MEDIA_PATH).resolve()

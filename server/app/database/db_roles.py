@@ -18,6 +18,9 @@ VALID_ROLES: frozenset[str] = frozenset(ALL_ROLES)
 # Операционный персонал: инвайты, смена устройства и т.п. Иерархия прав: owner ≥ chief_admin ≥ admin ≥ user.
 OPERATIONAL_STAFF_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "admin"})
 
+# Просмотр чувствительных журналов поддержки: только главный админ и владелец.
+CHIEF_OR_OWNER_ROLES: frozenset[str] = frozenset({"owner", "chief_admin"})
+
 # Иерархия для staff-бана и UI (одна «главная» роль = максимум по рангу).
 ROLE_HIERARCHY_RANK: dict[str, int] = {
     "user": 0,

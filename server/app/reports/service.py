@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import aiosqlite
 from fastapi import HTTPException, status
 
 from app.database.db_reports import (
@@ -71,13 +72,24 @@ async def submit_report(
         if sender_id is not None:
             uid = int(sender_id)
 
-    rid = await create_report(
-        db,
-        reporter_id=reporter_id,
-        target_type=tt,
-        target_user_id=uid,
-        target_message_id=mid,
-        reason_code=reason_code,
-        description=description,
-    )
+    try:
+        rid = await create_report(
+            db,
+            reporter_id=reporter_id,
+            target_type=tt,
+            target_user_id=uid,
+            target_message_id=mid,
+            reason_code=reason_code,
+            description=description,
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Сервис жалоб недоступен (схема БД). Обратитесь к администратору.",
+        ) from e
+    except aiosqlite.IntegrityError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cannot_create_report",
+        ) from e
     return rid

@@ -30,6 +30,7 @@ from app.auth.schemas import (
 )
 from app.config import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, SECRET_KEY
 from app.database import db_auth_sessions
+from app.database import db_user_audit
 from app.database.database import Database
 from app.device_transfer.schemas import (
     DeviceTransferRequestOut,
@@ -305,6 +306,13 @@ async def register_user(
     await invite_module.use_invite(db, body.invite_token, user_id)
     await db.create_user_settings(user_id)
 
+    try:
+        from app.messages.support_chat import ensure_user_in_support_chat
+
+        await ensure_user_in_support_chat(db, user_id)
+    except Exception:
+        logger.warning("Не удалось добавить user_id=%s в чат поддержки", user_id, exc_info=True)
+
     await db.log_event(
         user_id,
         "registered",
@@ -385,6 +393,19 @@ async def login_user(
         json.dumps({"login": login_clean}, ensure_ascii=False),
         client_ip,
         body.device_model,
+    )
+
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=uid,
+        actor_id=None,
+        event_type="auth.login_success",
+        payload={
+            "login": login_clean,
+            "ip": client_ip,
+            "device_model": body.device_model,
+            "device_os": body.device_os,
+        },
     )
 
     return await _issue_token_pair(

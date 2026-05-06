@@ -25,3 +25,18 @@ async def require_moderation_staff(
             detail="Недостаточно прав (нужна роль admin, chief_admin или owner)",
         )
     return user
+
+
+async def require_chief_admin_or_owner(
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    from app.database.db_roles import CHIEF_OR_OWNER_ROLES
+
+    uid = int(user["id"])
+    if not await db.rbac_user_has_any_role(uid, CHIEF_OR_OWNER_ROLES):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав (нужна роль chief_admin или owner)",
+        )
+    return user

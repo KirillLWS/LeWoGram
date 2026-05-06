@@ -67,6 +67,18 @@ class Database:
         from app.database.user_moderation_migrations import apply_user_moderation_migrations
 
         await apply_user_moderation_migrations(self._db_path)
+        from app.database.support_diagnostics_migrations import apply_support_diagnostics_migrations
+
+        await apply_support_diagnostics_migrations(self._db_path)
+        from app.database.support_access_migrations import apply_support_access_migrations
+
+        await apply_support_access_migrations(self._db_path)
+        from app.database.support_chat_migrations import apply_support_chat_migrations
+
+        await apply_support_chat_migrations(self._db_path)
+        from app.database.user_audit_migrations import apply_user_audit_migrations
+
+        await apply_user_audit_migrations(self._db_path)
         await self._migrate_chats_timeline_index()
         logger.info("База инициализирована: %s", self._db_path)
 
@@ -148,7 +160,7 @@ class Database:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT * FROM users WHERE login = ?",
+                "SELECT * FROM users WHERE login = ? COLLATE NOCASE",
                 (login.strip(),),
             ) as cur:
                 row = await cur.fetchone()
@@ -914,8 +926,44 @@ class Database:
                 """,
                 (chat_id,),
             )
+        await db.commit()
+        return int(cur.lastrowid)
+
+    async def add_chat_member_if_absent(
+        self,
+        chat_id: int,
+        user_id: int,
+        role: str = "member",
+        can_write: int = 1,
+    ) -> bool:
+        """True если участник добавлен; False если уже был."""
+        async with aiosqlite.connect(self._db_path) as db:
+            async with db.execute(
+                """
+                SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?
+                """,
+                (chat_id, user_id),
+            ) as cur:
+                if await cur.fetchone() is not None:
+                    return False
+            await db.execute(
+                """
+                INSERT INTO chat_members (chat_id, user_id, role, can_write)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, user_id, role, can_write),
+            )
+            await db.execute(
+                """
+                UPDATE chats
+                SET members_count = members_count + 1,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (chat_id,),
+            )
             await db.commit()
-            return int(cur.lastrowid)
+            return True
 
     async def get_chat_member(self, chat_id: int, user_id: int) -> dict[str, Any] | None:
         async with aiosqlite.connect(self._db_path) as db:

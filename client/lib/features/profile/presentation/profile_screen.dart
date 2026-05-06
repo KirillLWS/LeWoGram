@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/device/support_telemetry.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
-import 'package:lewogram_client/features/developer/presentation/developer_hub_screen.dart';
+import 'package:lewogram_client/features/chat/data/chat_models.dart';
+import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
 import 'package:lewogram_client/features/profile/data/profile_user.dart';
 import 'package:lewogram_client/features/profile/presentation/edit_profile_sheet.dart';
 import 'package:lewogram_client/features/profile/presentation/profile_avatar.dart';
@@ -250,6 +252,151 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
       }
     } finally {
       if (mounted) setState(() => _pickingAvatar = false);
+    }
+  }
+
+  Future<void> _openSupportChat() async {
+    try {
+      final me = await widget.apiClient.getMe();
+      if (!mounted) return;
+      final primary = me['primary_role']?.toString().trim();
+      final staff = {'owner', 'chief_admin', 'admin'}.contains(primary);
+      final raw = await widget.apiClient.getSupportChat();
+      if (!mounted) return;
+      final m = Map<String, dynamic>.from(raw);
+      final id = (m['id'] as num).toInt();
+      final title = ChatItem.fromJson(m).resolvedTitle;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            chatId: id,
+            apiClient: widget.apiClient,
+            chatType: 'support',
+            allowSupportStaffReply: staff,
+            initialDisplayTitle: title,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _submitDiagnosticSheet() async {
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Диагностика для поддержки'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 5,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Опишите проблему',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Отправить')),
+        ],
+      ),
+    );
+    final text = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || text.isEmpty || !mounted) return;
+    try {
+      final granted = await _ensureSupportAccessForDiagnostics();
+      if (!granted || !mounted) return;
+      final meta = await collectSupportTelemetrySnapshot();
+      await widget.apiClient
+          .submitSupportDiagnostic(body: text, clientMeta: meta);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              const Text('Диагностика отправлена (доступ активен 30 минут)'),
+          action: SnackBarAction(
+            label: 'Отключить сейчас',
+            onPressed: _revokeSupportAccessNow,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<bool> _ensureSupportAccessForDiagnostics() async {
+    try {
+      final state = await widget.apiClient.getMySupportAccess();
+      if (!mounted) return false;
+      if (state['active'] == true) return true;
+      final allow = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Включить доступ поддержке'),
+          content: const Text(
+            'Для расширенной диагностики нужен временный доступ на 30 минут. '
+            'Его можно отключить в любой момент.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Включить'),
+            ),
+          ],
+        ),
+      );
+      if (allow != true || !mounted) return false;
+      await widget.apiClient.grantMySupportAccess(minutes: 30);
+      if (!mounted) return false;
+      return true;
+    } on ApiException catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      return false;
+    }
+  }
+
+  Future<void> _revokeSupportAccessNow() async {
+    try {
+      await widget.apiClient.revokeMySupportAccess();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Доступ поддержки отключен')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -538,6 +685,27 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                     height: 1, color: scheme.outlineVariant),
                               ],
                               ListTile(
+                                leading: Icon(Icons.support_agent_outlined,
+                                    color: scheme.primary),
+                                title: const Text('Поддержка'),
+                                subtitle: const Text(
+                                  'Общий чат: напишите вопрос; ответ по цитате — у модераторов',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: _openSupportChat,
+                              ),
+                              ListTile(
+                                leading: Icon(Icons.bug_report_outlined,
+                                    color: scheme.primary),
+                                title: const Text('Отправить диагностику'),
+                                subtitle: const Text(
+                                  'Лог и данные устройства для поддержки (сервер)',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: _submitDiagnosticSheet,
+                              ),
+                              Divider(height: 1, color: scheme.outlineVariant),
+                              ListTile(
                                 leading: Icon(Icons.history_outlined,
                                     color: scheme.primary),
                                 title: const Text('История назначения ролей'),
@@ -560,23 +728,6 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () {
                                   Navigator.of(context).pushNamed('/settings');
-                                },
-                              ),
-                              Divider(height: 1, color: scheme.outlineVariant),
-                              ListTile(
-                                leading: Icon(Icons.developer_mode_outlined,
-                                    color: scheme.primary),
-                                title: const Text('Сервис и отладка'),
-                                subtitle:
-                                    const Text('Информация для разработчика'),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () {
-                                  Navigator.of(context).push<void>(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          const DeveloperHubScreen(),
-                                    ),
-                                  );
                                 },
                               ),
                             ],

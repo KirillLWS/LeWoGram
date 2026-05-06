@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 from app.auth import ban_policy
 from app.avatar_fields import apply_avatar_fields
 from app.database.database import Database
+from app.database.db_roles import OPERATIONAL_STAFF_ROLES
 from app.messages.schemas import (
     ChatResponse,
     CreateDirectChatRequest,
@@ -21,6 +22,7 @@ from app.messages.schemas import (
     PatchChatRequest,
     SendTextMessageRequest,
 )
+from app.messages import support_chat as support_chat_util
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +269,19 @@ async def create_group_chat(
     return await _finalize_chat_response(db, payload, current_user_id)
 
 
+async def open_support_chat(db: Database, current_user_id: int) -> ChatResponse:
+    """Добавляет пользователя в глобальный чат поддержки и возвращает его карточку."""
+    await _ensure_user_not_banned_for_api(db, current_user_id)
+    cid = await support_chat_util.ensure_user_in_support_chat(db, current_user_id)
+    payload = await _chat_payload_for_user(db, cid, current_user_id)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось загрузить чат поддержки",
+        )
+    return await _finalize_chat_response(db, payload, current_user_id)
+
+
 async def send_text_message(
     db: Database,
     current_user_id: int,
@@ -309,11 +324,35 @@ async def send_text_message(
             if peer_full is not None:
                 await _raise_if_peer_blocked_for_messaging(db, peer_full)
 
+    reply_to_id = body.reply_to_id
+    if reply_to_id is not None:
+        parent = await db.get_message_by_id(reply_to_id)
+        if parent is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Сообщение для ответа не найдено",
+            )
+        if int(parent["chat_id"]) != body.chat_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ответ относится к другому чату",
+            )
+
+    ctype = str(chat.get("type") or "")
+    if ctype == "support":
+        is_staff = await db.rbac_user_has_any_role(current_user_id, OPERATIONAL_STAFF_ROLES)
+        if reply_to_id is not None and not is_staff:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Отвечать в чате поддержки могут только сотрудники (admin и выше)",
+            )
+
     msg_id = await db.create_message(
         body.chat_id,
         current_user_id,
         "text",
         text=text,
+        reply_to_id=reply_to_id,
     )
     row = await db.get_message_by_id(msg_id)
     if row is None:
@@ -345,6 +384,7 @@ async def list_user_chats(db: Database, current_user_id: int) -> list[ChatRespon
     Список чатов с превью последнего сообщения и числом непрочитанных входящих
     (по таблице message_reads).
     """
+    await support_chat_util.ensure_user_in_support_chat(db, current_user_id)
     rows = await db.get_user_chats(current_user_id)
     out: list[ChatResponse] = []
     for r in rows:
@@ -385,7 +425,13 @@ async def patch_chat(
         )
 
     ctype = str(chat.get("type") or "")
-    if ctype != "direct" and member.get("role") != "owner":
+    if ctype == "support":
+        if not await db.rbac_user_has_any_role(current_user_id, OPERATIONAL_STAFF_ROLES):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Переименование чата поддержки доступно только сотрудникам",
+            )
+    elif ctype != "direct" and member.get("role") != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Только владелец может менять название этого чата",

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:lewogram_client/core/device/support_telemetry.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
@@ -38,6 +40,7 @@ class ChatScreen extends StatefulWidget {
     this.initialAvatarPath,
     this.peerLogin,
     this.peerDisplayName,
+    this.allowSupportStaffReply = false,
   });
 
   final int chatId;
@@ -59,6 +62,9 @@ class ChatScreen extends StatefulWidget {
   final String? initialAvatarPath;
   final String? peerLogin;
   final String? peerDisplayName;
+
+  /// В чате поддержки: сотрудники могут отвечать с цитатой ([reply_to_id] на сервере).
+  final bool allowSupportStaffReply;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -90,6 +96,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   bool _peerComposeBlocked = false;
   String? _peerComposeHint;
   bool _initialized = false;
+  int? _replyToMessageId;
 
   @override
   void initState() {
@@ -241,7 +248,9 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            hint != null && hint.isNotEmpty ? hint : 'Нельзя отправить сообщение: аккаунт заблокирован',
+            hint != null && hint.isNotEmpty
+                ? hint
+                : 'Нельзя отправить сообщение: аккаунт заблокирован',
           ),
         ),
       );
@@ -250,13 +259,19 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     final text = _textCtrl.text.trim();
     if (text.isEmpty) return;
     try {
-      await widget.apiClient.sendText(widget.chatId, text);
+      await widget.apiClient.sendText(
+        widget.chatId,
+        text,
+        replyToId: _replyToMessageId,
+      );
       if (!mounted) return;
       _textCtrl.clear();
+      setState(() => _replyToMessageId = null);
       await _loadMessages(silent: true);
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
@@ -273,6 +288,135 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     final t = widget.chatType?.trim().toLowerCase();
     if (t == null || t.isEmpty) return true;
     return t == 'direct';
+  }
+
+  bool _isSupportChat() => widget.chatType?.trim().toLowerCase() == 'support';
+
+  /// Одноразовые координаты для client_meta; при отказе или ошибке — без полей geo_*.
+  Future<void> _mergeOneShotGeoIntoMeta(Map<String, dynamic> meta) async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      meta['geo_lat'] = pos.latitude;
+      meta['geo_lng'] = pos.longitude;
+      meta['geo_accuracy_m'] = pos.accuracy;
+    } catch (_) {
+      // Не блокируем отправку диагностики.
+    }
+  }
+
+  Future<void> _submitSupportDiagnosticFromChat() async {
+    final result = await showDialog<_SupportDiagnosticDialogResult?>(
+      context: context,
+      builder: (ctx) => const _SupportDiagnosticDialog(),
+    );
+    if (result == null || !mounted) return;
+    final text = result.description.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Введите краткое описание проблемы')),
+      );
+      return;
+    }
+    try {
+      final granted = await _ensureSupportAccessForDiagnostics();
+      if (!granted || !mounted) return;
+      final meta =
+          Map<String, dynamic>.from(await collectSupportTelemetrySnapshot());
+      if (result.includeGeoInReport) {
+        await _mergeOneShotGeoIntoMeta(meta);
+      }
+      await widget.apiClient
+          .submitSupportDiagnostic(body: text, clientMeta: meta);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              const Text('Диагностика отправлена (доступ активен 30 минут)'),
+          action: SnackBarAction(
+            label: 'Отключить сейчас',
+            onPressed: _revokeSupportAccessNow,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<bool> _ensureSupportAccessForDiagnostics() async {
+    try {
+      final state = await widget.apiClient.getMySupportAccess();
+      if (!mounted) return false;
+      if (state['active'] == true) return true;
+      final allow = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Включить доступ поддержке'),
+          content: const Text(
+            'Для отправки расширенной диагностики нужен временный доступ на 30 минут. '
+            'Его можно отключить сразу после отправки.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Включить'),
+            ),
+          ],
+        ),
+      );
+      if (allow != true || !mounted) return false;
+      await widget.apiClient.grantMySupportAccess(minutes: 30);
+      if (!mounted) return false;
+      return true;
+    } on ApiException catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      return false;
+    }
+  }
+
+  Future<void> _revokeSupportAccessNow() async {
+    try {
+      await widget.apiClient.revokeMySupportAccess();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Доступ поддержки отключен')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
   }
 
   int? _resolvedPeerUserId() {
@@ -308,12 +452,15 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       setState(() {
         _peerComposeBlocked = banned;
         _peerComposeHint = banned
-            ? (reason.trim().isNotEmpty ? reason.trim() : 'Собеседник заблокирован')
+            ? (reason.trim().isNotEmpty
+                ? reason.trim()
+                : 'Собеседник заблокирован')
             : null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
       setState(() {
         _peerComposeBlocked = false;
         _peerComposeHint = null;
@@ -346,7 +493,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     try {
       final raw = await widget.apiClient.getUserPublic(peerId);
       if (!mounted) return;
-      final profile = UserPublicProfile.fromJson(Map<String, dynamic>.from(raw));
+      final profile =
+          UserPublicProfile.fromJson(Map<String, dynamic>.from(raw));
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (ctx) => UserProfileScreen(
@@ -356,7 +504,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
               Navigator.of(ctx).pop();
               if (otherUserId == peerId) return;
               try {
-                final chat = await widget.apiClient.createDirectChat(otherUserId);
+                final chat =
+                    await widget.apiClient.createDirectChat(otherUserId);
                 if (!mounted) return;
                 final id = (chat['id'] as num).toInt();
                 await Navigator.of(context).push<void>(
@@ -372,7 +521,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                 );
               } on ApiException catch (e) {
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text(e.message)));
               }
             },
           ),
@@ -380,7 +530,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -422,7 +573,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
@@ -435,6 +587,9 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     final cs = theme.colorScheme;
     final peerForProfile = _resolvedPeerUserId();
     final showProfileAction = _isDirectChat() && peerForProfile != null;
+    final hideRename = widget.chatType?.toLowerCase() == 'support' &&
+        !widget.allowSupportStaffReply;
+    final showSupportDiagnosticAction = _isSupportChat();
 
     return Scaffold(
       appBar: AppBar(
@@ -468,11 +623,18 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
               tooltip: 'Профиль',
               onPressed: _openPeerProfile,
             ),
-          IconButton(
-            icon: const Icon(Icons.edit_outlined),
-            tooltip: 'Переименовать',
-            onPressed: _showRenameDialog,
-          ),
+          if (showSupportDiagnosticAction)
+            IconButton(
+              icon: const Icon(Icons.bug_report_outlined),
+              tooltip: 'Отправить диагностику',
+              onPressed: _submitSupportDiagnosticFromChat,
+            ),
+          if (!hideRename)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Переименовать',
+              onPressed: _showRenameDialog,
+            ),
         ],
       ),
       body: Column(
@@ -492,101 +654,138 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                     onRefresh: _loadMessages,
                     child: ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 12),
                       itemCount: _messages.length,
                       itemBuilder: (context, index) {
-                      final m = _messages[index];
-                      final isMine = _isOwnMessage(m);
-                      final text = m.text ?? '';
-                      final timeStr = _shortMessageTime(m.createdAt);
+                        final m = _messages[index];
+                        final isMine = _isOwnMessage(m);
+                        final text = m.text ?? '';
+                        final timeStr = _shortMessageTime(m.createdAt);
 
-                      final bubbleBg = isMine
-                          ? cs.primaryContainer
-                          : cs.surfaceContainerHighest;
-                      final onBubble = isMine
-                          ? cs.onPrimaryContainer
-                          : cs.onSurfaceVariant;
+                        final bubbleBg = isMine
+                            ? cs.primaryContainer
+                            : cs.surfaceContainerHighest;
+                        final onBubble = isMine
+                            ? cs.onPrimaryContainer
+                            : cs.onSurfaceVariant;
 
-                      final align =
-                          isMine ? Alignment.centerRight : Alignment.centerLeft;
-                      final crossMain = isMine
-                          ? CrossAxisAlignment.end
-                          : CrossAxisAlignment.start;
+                        final align = isMine
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft;
+                        final crossMain = isMine
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start;
 
-                      final radius = BorderRadius.only(
-                        topLeft: const Radius.circular(18),
-                        topRight: const Radius.circular(18),
-                        bottomLeft: Radius.circular(isMine ? 18 : 4),
-                        bottomRight: Radius.circular(isMine ? 4 : 18),
-                      );
+                        final radius = BorderRadius.only(
+                          topLeft: const Radius.circular(18),
+                          topRight: const Radius.circular(18),
+                          bottomLeft: Radius.circular(isMine ? 18 : 4),
+                          bottomRight: Radius.circular(isMine ? 4 : 18),
+                        );
 
-                      final bubble = Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-                        decoration: BoxDecoration(
-                          color: bubbleBg,
-                          borderRadius: radius,
-                          boxShadow: [
-                            BoxShadow(
-                              color: cs.shadow.withValues(alpha: 0.06),
-                              blurRadius: 6,
-                              offset: const Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: crossMain,
-                          children: [
-                            SelectableText(
-                              text,
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                color: isMine ? cs.onPrimaryContainer : cs.onSurface,
-                                height: 1.4,
-                              ),
-                            ),
-                            if (timeStr.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                timeStr,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: onBubble.withValues(alpha: 0.85),
+                        final bubble = GestureDetector(
+                          onLongPress: widget.allowSupportStaffReply &&
+                                  widget.chatType?.toLowerCase() == 'support'
+                              ? () {
+                                  setState(() => _replyToMessageId = m.id);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content:
+                                          Text('Ответ на сообщение #${m.id}'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              : null,
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                            decoration: BoxDecoration(
+                              color: bubbleBg,
+                              borderRadius: radius,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: cs.shadow.withValues(alpha: 0.06),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 1),
                                 ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      );
-
-                      return Align(
-                        alignment: align,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.sizeOf(context).width * 0.84,
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: crossMain,
+                              children: [
+                                SelectableText(
+                                  text,
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: isMine
+                                        ? cs.onPrimaryContainer
+                                        : cs.onSurface,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                if (timeStr.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    timeStr,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: onBubble.withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
-                          child: bubble,
-                        ),
-                      );
-                    },
+                        );
+
+                        return Align(
+                          alignment: align,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.sizeOf(context).width * 0.84,
+                            ),
+                            child: bubble,
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
           ),
           SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (_replyToMessageId != null && widget.allowSupportStaffReply)
+                  Material(
+                    color: cs.secondaryContainer.withValues(alpha: 0.5),
+                    child: ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.reply_outlined),
+                      title: Text('Ответ на сообщение #$_replyToMessageId'),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () =>
+                            setState(() => _replyToMessageId = null),
+                      ),
+                    ),
+                  ),
                 if (_isDirectChat() && _peerComposeBlocked)
                   Material(
                     color: cs.errorContainer.withValues(alpha: 0.35),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
                       child: Row(
                         children: [
-                          Icon(Icons.info_outline, color: cs.onErrorContainer, size: 20),
+                          Icon(Icons.info_outline,
+                              color: cs.onErrorContainer, size: 20),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               _peerComposeHint ??
-                                  (_peerComposeBlocked ? 'Нельзя отправлять сообщения' : ''),
+                                  (_peerComposeBlocked
+                                      ? 'Нельзя отправлять сообщения'
+                                      : ''),
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: cs.onErrorContainer,
                               ),
@@ -608,7 +807,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                           decoration: InputDecoration(
                             hintText: 'Сообщение…',
                             filled: true,
-                            fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                            fillColor: cs.surfaceContainerHighest
+                                .withValues(alpha: 0.5),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -618,7 +818,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide(color: cs.primary, width: 1.5),
+                              borderSide:
+                                  BorderSide(color: cs.primary, width: 1.5),
                             ),
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16,
@@ -649,6 +850,103 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SupportDiagnosticDialogResult {
+  const _SupportDiagnosticDialogResult({
+    required this.description,
+    required this.includeGeoInReport,
+  });
+
+  final String description;
+  final bool includeGeoInReport;
+}
+
+class _SupportDiagnosticDialog extends StatefulWidget {
+  const _SupportDiagnosticDialog();
+
+  @override
+  State<_SupportDiagnosticDialog> createState() =>
+      _SupportDiagnosticDialogState();
+}
+
+class _SupportDiagnosticDialogState extends State<_SupportDiagnosticDialog> {
+  late final TextEditingController _controller;
+  bool _includeGeoInReport = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final t = _controller.text.trim();
+    if (t.isEmpty) return;
+    Navigator.pop(
+      context,
+      _SupportDiagnosticDialogResult(
+        description: t,
+        includeGeoInReport: _includeGeoInReport,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canSend = _controller.text.trim().isNotEmpty;
+    return AlertDialog(
+      title: const Text('Диагностика для поддержки'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _controller,
+              maxLines: 5,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Кратко опишите проблему',
+                border: OutlineInputBorder(),
+              ),
+              textCapitalization: TextCapitalization.sentences,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              value: _includeGeoInReport,
+              onChanged: (v) =>
+                  setState(() => _includeGeoInReport = v ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Включить гео в отчёт'),
+              subtitle: const Text(
+                'Одноразово, после разрешения. Можно отправить без геоданных.',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: canSend ? _submit : null,
+          child: const Text('Отправить'),
+        ),
+      ],
     );
   }
 }

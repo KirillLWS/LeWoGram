@@ -360,23 +360,42 @@ class FriendsService:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Исходящей заявки нет")
 
     async def remove(self, user_id: int, other_user_id: int) -> None:
+        """
+        Убираем принятую дружбу, но сохраняем исходную заявку как pending в том же направлении
+        (from → to), чтобы входящая/исходящая заявка снова отображалась в списках.
+        """
         await self._ensure_actor_not_banned(user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
-            cur = await conn.execute(
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
                 """
-                DELETE FROM friendships
+                SELECT id, from_user_id, to_user_id FROM friendships
                 WHERE status = ?
                   AND (
                     (from_user_id = ? AND to_user_id = ?)
                     OR (from_user_id = ? AND to_user_id = ?)
                   )
+                ORDER BY id DESC
                 """,
                 (_ST_ACCEPTED, user_id, other_user_id, other_user_id, user_id),
-            )
-            await conn.commit()
-            if cur.rowcount == 0:
+            ) as cur:
+                rows = await cur.fetchall()
+            if not rows:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Дружба не найдена")
+            primary_id = int(rows[0]["id"])
+            extra_ids = [int(_row_to_dict(r)["id"]) for r in rows[1:]]
+            await conn.execute(
+                """
+                UPDATE friendships
+                SET status = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (_ST_PENDING, primary_id),
+            )
+            for eid in extra_ids:
+                await conn.execute("DELETE FROM friendships WHERE id = ?", (eid,))
+            await conn.commit()
 
     async def block(self, from_user_id: int, to_user_id: int) -> None:
         await self._ensure_actor_not_banned(from_user_id)
@@ -534,7 +553,11 @@ class FriendsService:
 async def get_status_response(db: Database, viewer_id: int, other_id: int) -> FriendStatusResponse:
     svc = FriendsService(db)
     d = await svc.get_status(viewer_id, other_id)
+    rel = str(d["relation"])
     return FriendStatusResponse(
-        relation=str(d["relation"]),
+        relation=rel,
         request_id=d.get("request_id"),
+        is_friend=rel == "friends",
+        incoming_request=rel == "pending_incoming",
+        outgoing_request=rel == "pending_outgoing",
     )

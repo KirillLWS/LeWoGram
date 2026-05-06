@@ -14,7 +14,9 @@ from app.admin.users_moderation_schemas import (
     StaffBanRequest,
 )
 from app.admin import users_moderation_service as users_mod_svc
+from app.admin.staff_moderation_guard import assert_staff_may_ban_target
 from app.auth.dependencies import get_db
+from app.database import db_auth_sessions, db_user_audit
 from app.database.database import Database
 from app.reports.deps import require_moderation_staff
 
@@ -61,4 +63,24 @@ async def admin_unban_user(
         actor_id=actor_id,
         target_user_id=user_id,
     )
+
+
+@router.post("/users/{user_id}/revoke-sessions")
+async def admin_revoke_user_sessions(
+    user_id: int,
+    staff: Annotated[dict, Depends(require_moderation_staff)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict[str, int]:
+    """Сбросить все активные refresh-сессии пользователя (выйти на всех устройствах)."""
+    actor_id = int(staff["id"])
+    await assert_staff_may_ban_target(db, actor_id=actor_id, target_user_id=user_id)
+    n = await db_auth_sessions.revoke_all_sessions_for_user(db.db_path, user_id)
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=user_id,
+        actor_id=actor_id,
+        event_type="admin.revoke_sessions",
+        payload={"revoked": n, "target_user_id": user_id},
+    )
+    return {"revoked": n}
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 
@@ -13,8 +14,17 @@ from app.auth import ban_policy
 from app.avatar_fields import apply_avatar_fields
 from app.config.config import AVATAR_MAX_BYTES, USER_ABOUT_MAX_LEN, media_dir
 from app.database.database import Database
+from app.database import db_support_access, db_support_diagnostics, db_user_audit
 from app.database.db_roles import highest_role_from_list
-from app.users.schemas import PatchUserMeRequest, UserMeResponse, UserPublicResponse, UserSearchResult
+from app.users.schemas import (
+    PatchUserMeRequest,
+    SupportAccessGrantRequest,
+    SupportAccessStateResponse,
+    SupportDiagnosticSubmitRequest,
+    UserMeResponse,
+    UserPublicResponse,
+    UserSearchResult,
+)
 from app.friends.service import get_status_response
 
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.]{3,32}$")
@@ -192,6 +202,9 @@ async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> User
     st = await get_status_response(db, viewer_id, user_id)
     d["relation_to_me"] = st.relation
     d["friend_request_id"] = st.request_id
+    d["is_friend"] = st.is_friend
+    d["incoming_request"] = st.incoming_request
+    d["outgoing_request"] = st.outgoing_request
     return UserPublicResponse.model_validate(d)
 
 
@@ -248,3 +261,133 @@ async def upload_avatar(db: Database, user: dict[str, Any], file: UploadFile) ->
     if fresh is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
     return await _me_response(db, fresh)
+
+
+def _support_access_state_from_row(
+    row: dict[str, Any] | None,
+) -> SupportAccessStateResponse:
+    if row is None:
+        return SupportAccessStateResponse(active=False)
+    return SupportAccessStateResponse(
+        active=True,
+        session_id=int(row["id"]),
+        granted_by_user_id=(
+            int(row["granted_by_user_id"])
+            if row.get("granted_by_user_id") is not None
+            else None
+        ),
+        created_at=str(row.get("created_at") or ""),
+        expires_at=str(row.get("expires_at") or ""),
+        scope=str(row.get("scope") or "diagnostics"),
+    )
+
+
+async def get_support_access_state(
+    db: Database,
+    user: dict[str, Any],
+) -> SupportAccessStateResponse:
+    uid = int(user["id"])
+    active = await db_support_access.get_active_support_access(db.db_path, user_id=uid)
+    return _support_access_state_from_row(active)
+
+
+async def grant_support_access(
+    db: Database,
+    user: dict[str, Any],
+    body: SupportAccessGrantRequest,
+) -> SupportAccessStateResponse:
+    uid = int(user["id"])
+    gate = await db.get_user_by_id(uid)
+    if gate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, gate)
+
+    row = await db_support_access.grant_support_access(
+        db.db_path,
+        user_id=uid,
+        granted_by_user_id=uid,
+        minutes=body.minutes,
+    )
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=uid,
+        actor_id=uid,
+        event_type="support.access_granted",
+        payload={
+            "session_id": int(row["id"]),
+            "minutes": int(body.minutes),
+            "scope": str(row.get("scope") or "diagnostics"),
+            "expires_at": row.get("expires_at"),
+        },
+    )
+    return _support_access_state_from_row(row)
+
+
+async def revoke_support_access(
+    db: Database,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    uid = int(user["id"])
+    gate = await db.get_user_by_id(uid)
+    if gate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, gate)
+
+    revoked = await db_support_access.revoke_active_support_access(db.db_path, user_id=uid)
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=uid,
+        actor_id=uid,
+        event_type="support.access_revoked",
+        payload={"revoked_sessions": int(revoked)},
+    )
+    return {"ok": True, "revoked_sessions": int(revoked)}
+
+
+async def submit_support_diagnostic(
+    db: Database,
+    user: dict[str, Any],
+    body: SupportDiagnosticSubmitRequest,
+) -> dict[str, Any]:
+    uid = int(user["id"])
+    gate = await db.get_user_by_id(uid)
+    if gate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, gate)
+
+    meta_str: str | None = None
+    if body.client_meta is not None:
+        has_meta = bool(body.client_meta)
+        if has_meta:
+            active = await db_support_access.get_active_support_access(
+                db.db_path,
+                user_id=uid,
+            )
+            if active is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Для расширенной диагностики сначала включите временный доступ поддержке "
+                        "(/users/me/support-access/grant)"
+                    ),
+                )
+        meta_str = json.dumps(body.client_meta, ensure_ascii=False)
+
+    rid = await db_support_diagnostics.insert_diagnostic_log(
+        db,
+        user_id=uid,
+        body=body.body,
+        client_meta=meta_str,
+    )
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=uid,
+        actor_id=None,
+        event_type="support.diagnostic_submit",
+        payload={
+            "diagnostic_log_id": rid,
+            "body_chars": len(body.body or ""),
+            "has_client_meta": meta_str is not None,
+        },
+    )
+    return {"id": rid, "ok": True}

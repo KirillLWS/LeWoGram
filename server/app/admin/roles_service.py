@@ -1,5 +1,7 @@
 """
-Выдача / отзыв ролей (админка): owner для owner/chief_admin; операционный персонал для остальных ролей.
+Выдача / отзыв ролей (админка): иерархия owner > chief_admin > admin > developer > user.
+Владелец может назначать и снимать любые роли (с ограничением на последнего owner).
+Остальные операторы — только роли строго ниже своей; chief_admin и owner назначает/снимает только owner.
 """
 
 from __future__ import annotations
@@ -9,11 +11,14 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.admin.staff_moderation_guard import assert_staff_may_ban_target
+from app.database import db_user_audit
 from app.database.database import Database
 from app.database.db_roles import (
     count_users_with_role,
+    highest_role_from_list,
     rbac_granted_intersects_required,
     revoke_role,
+    role_rank,
     set_single_role,
     VALID_ROLES,
 )
@@ -43,22 +48,40 @@ async def _ensure_mutator(db: Database, actor_id: int) -> None:
         )
 
 
+def _actor_highest_role(actor_roles: set[str]) -> str:
+    return highest_role_from_list(list(actor_roles))
+
+
 def _can_grant(actor_roles: set[str], role: str) -> bool:
+    """
+    Назначить роль R можно только если R строго ниже наивысшей роли актора,
+    либо актор — owner (тогда допускаются все VALID_ROLES, включая chief_admin и owner).
+    """
     if role not in VALID_ROLES:
         return False
-    if role in ("owner", "chief_admin"):
-        return "owner" in actor_roles
-    return rbac_granted_intersects_required(actor_roles, MUTATE_ROLES)
+    if not rbac_granted_intersects_required(actor_roles, MUTATE_ROLES):
+        return False
+    if "owner" in actor_roles:
+        return True
+    return role_rank(role) < role_rank(_actor_highest_role(actor_roles))
 
 
 def _can_revoke(actor_roles: set[str], role: str) -> bool:
+    """
+    Снять роль R: owner/chief_admin — только owner; остальное — строго ниже ранга актора;
+    owner может снять любую роль кроме последнего owner (отдельная проверка ниже).
+    """
     if role not in VALID_ROLES:
         return False
     if role == "owner":
         return "owner" in actor_roles
     if role == "chief_admin":
         return "owner" in actor_roles
-    return rbac_granted_intersects_required(actor_roles, MUTATE_ROLES)
+    if not rbac_granted_intersects_required(actor_roles, MUTATE_ROLES):
+        return False
+    if "owner" in actor_roles:
+        return True
+    return role_rank(role) < role_rank(_actor_highest_role(actor_roles))
 
 
 async def get_user_roles_list(
@@ -106,6 +129,13 @@ async def grant_user_role(
         role=r,
         actor_user_id=actor_id,
         record_history=True,
+    )
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=target_user_id,
+        actor_id=actor_id,
+        event_type="admin.role_grant",
+        payload={"role": r, "target_user_id": target_user_id},
     )
     return {"ok": True}
 
@@ -164,6 +194,13 @@ async def revoke_user_role(
             actor_user_id=actor_id,
             record_history=True,
         )
+    db_user_audit.schedule_user_audit_event(
+        db.db_path,
+        user_id=target_user_id,
+        actor_id=actor_id,
+        event_type="admin.role_revoke",
+        payload={"role": r, "target_user_id": target_user_id},
+    )
     return {"ok": True}
 
 

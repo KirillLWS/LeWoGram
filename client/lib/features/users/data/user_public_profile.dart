@@ -13,6 +13,9 @@ class UserPublicProfile {
     this.relationToMe,
     this.friendRequestId,
     this.primaryRole,
+    this.isFriend = false,
+    this.incomingRequest = false,
+    this.outgoingRequest = false,
   });
 
   final int id;
@@ -31,6 +34,10 @@ class UserPublicProfile {
 
   /// Авторитетная роль с сервера ([primary_role]).
   final String? primaryRole;
+
+  final bool isFriend;
+  final bool incomingRequest;
+  final bool outgoingRequest;
 
   factory UserPublicProfile.fromJson(Map<String, dynamic> json) {
     int? reqId;
@@ -56,6 +63,9 @@ class UserPublicProfile {
       accountStatus: json['account_status'] as String?,
       banUntil: json['ban_until'] as String?,
       primaryRole: primaryRole,
+      isFriend: json['is_friend'] == true,
+      incomingRequest: json['incoming_request'] == true,
+      outgoingRequest: json['outgoing_request'] == true,
     );
   }
 
@@ -78,5 +88,8 @@ class UserPublicProfile {
         if (relationToMe != null) 'relation_to_me': relationToMe,
         if (friendRequestId != null) 'friend_request_id': friendRequestId,
         if (primaryRole != null) 'primary_role': primaryRole,
+        'is_friend': isFriend,
+        'incoming_request': incomingRequest,
+        'outgoing_request': outgoingRequest,
       };
 }

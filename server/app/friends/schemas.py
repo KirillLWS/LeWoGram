@@ -48,3 +48,6 @@ class FriendStatusResponse(BaseModel):
 
     relation: str
     request_id: int | None = None
+    is_friend: bool = False
+    incoming_request: bool = False
+    outgoing_request: bool = False

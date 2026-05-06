@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lewogram_client/core/network/account_banned_exception.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 
@@ -123,9 +124,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Жалоба отправлена')),
       );
+    } on AccountBannedException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.reason)));
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } on UnauthorizedException catch (_) {
+      if (!mounted) return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) setState(() => _reportBusy = false);
     }
