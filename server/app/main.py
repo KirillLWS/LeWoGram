@@ -15,8 +15,11 @@ from dotenv import load_dotenv
 _SERVER_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_SERVER_ROOT / ".env")
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.admin.invites_router import router as admin_invites_router
@@ -30,6 +33,7 @@ from app.friends.router import router as friends_router
 from app.messages.router import router as messages_router
 from app.owner.router import router as owner_router
 from app.push.router import router as push_router
+from app.reports.router import router as reports_router
 from app.users.router import router as users_router
 
 logger = logging.getLogger(__name__)
@@ -60,6 +64,40 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LeWoGram", lifespan=lifespan)
 
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, dict) and exc.detail.get("code") == "account_blocked":
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=jsonable_encoder(exc.detail),
+        )
+    detail = exc.detail
+    if not isinstance(detail, (str, int, float, bool, type(None), list, dict)):
+        detail = str(detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": jsonable_encoder(detail)},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("422 %s %s — %s", request.method, request.url.path, exc.errors())
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        return await _http_exception_handler(request, exc)
+    logger.exception("Необработанная ошибка %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "internal_server_error"},
+    )
+
+
 # Пока разрешаем любые источники (в проде — конкретные origin).
 # С allow_origins=["*"] нельзя allow_credentials=True (ограничение CORS в браузерах).
 app.add_middleware(
@@ -76,6 +114,7 @@ app.include_router(messages_router, prefix="/messages")
 app.include_router(users_router, prefix="/users")
 app.include_router(friends_router, prefix="/friends")
 app.include_router(push_router, prefix="/push")
+app.include_router(reports_router)
 app.include_router(owner_router, prefix="/owner")
 app.include_router(admin_roles_router, prefix="/admin")
 app.include_router(admin_invites_router, prefix="/admin")

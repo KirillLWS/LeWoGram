@@ -15,12 +15,19 @@ class _DeviceTransferMyRequestsScreenState
     extends State<DeviceTransferMyRequestsScreen> {
   bool _loading = true;
   String? _error;
-  List<Map<String, dynamic>> _rows = [];
+  List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _history = [];
+  bool _initialized = false;
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   Future<void> _load() async {
@@ -32,13 +39,26 @@ class _DeviceTransferMyRequestsScreenState
     try {
       final raw = await api.deviceTransferMy();
       if (!mounted) return;
+      final p = raw['pending'];
+      final h = raw['history'];
+      final pending = (p is List ? p : const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      final history = (h is List ? h : const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
       setState(() {
-        _rows = raw
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
+        _pending = pending;
+        _history = history;
         _loading = false;
       });
     } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    } on UnauthorizedException catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.message;
@@ -91,6 +111,51 @@ class _DeviceTransferMyRequestsScreenState
     }
   }
 
+  Widget _card(ThemeData theme, Map<String, dynamic> r, {required bool allowCancel}) {
+    final id = (r['id'] as num).toInt();
+    final st = r['status'] as String? ?? '';
+    final mode = r['mode'] as String? ?? '';
+    final reason = r['reason'] as String? ?? '';
+    final exp = r['expires_at'] as String? ?? '';
+    final pending = st == 'pending';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '#$id · $st',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Chip(
+                  label: Text(mode),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            if (exp.isNotEmpty) Text('Истекает: $exp'),
+            const SizedBox(height: 8),
+            Text(reason),
+            if (allowCancel && pending) ...[
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => _cancel(id),
+                child: const Text('Отменить заявку'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -126,63 +191,52 @@ class _DeviceTransferMyRequestsScreenState
                 )
               : RefreshIndicator(
                   onRefresh: _load,
-                  child: _rows.isEmpty
-                      ? ListView(
-                          children: const [
-                            SizedBox(height: 120),
-                            Center(child: Text('Заявок пока нет')),
-                          ],
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _rows.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 12),
-                          itemBuilder: (ctx, i) {
-                            final r = _rows[i];
-                            final id = (r['id'] as num).toInt();
-                            final st = r['status'] as String? ?? '';
-                            final mode = r['mode'] as String? ?? '';
-                            final reason = r['reason'] as String? ?? '';
-                            final exp = r['expires_at'] as String? ?? '';
-                            final pending = st == 'pending';
-                            return Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            '#$id · $st',
-                                            style: theme.textTheme.titleSmall?.copyWith(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                        Chip(
-                                          label: Text(mode),
-                                          visualDensity: VisualDensity.compact,
-                                        ),
-                                      ],
-                                    ),
-                                    if (exp.isNotEmpty) Text('Истекает: $exp'),
-                                    const SizedBox(height: 8),
-                                    Text(reason),
-                                    if (pending) ...[
-                                      const SizedBox(height: 12),
-                                      OutlinedButton(
-                                        onPressed: () => _cancel(id),
-                                        child: const Text('Отменить заявку'),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      Text(
+                        'Активные',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_pending.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Text(
+                            'Нет активных заявок',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        )
+                      else
+                        ..._pending.map((r) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _card(theme, r, allowCancel: true),
+                            )),
+                      Text(
+                        'История',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_history.isEmpty)
+                        Text(
+                          'История пуста',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        )
+                      else
+                        ..._history.map((r) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _card(theme, r, allowCancel: false),
+                            )),
+                    ],
+                  ),
                 ),
     );
   }

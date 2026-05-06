@@ -77,8 +77,10 @@ async def rotate_refresh_session(
                     COALESCE(NULLIF(TRIM(u.account_status), ''), CASE WHEN u.is_blocked = 1 THEN 'banned' ELSE 'active' END) = 'banned'
                     OR (
                       COALESCE(NULLIF(TRIM(u.account_status), ''), 'active') = 'temp_banned'
-                      AND u.ban_until IS NOT NULL AND TRIM(u.ban_until) != ''
-                      AND datetime(u.ban_until) > datetime('now')
+                      AND (
+                        u.ban_until IS NULL OR TRIM(u.ban_until) = ''
+                        OR datetime(u.ban_until) > datetime('now')
+                      )
                     )
                   )
                 """,
@@ -102,10 +104,9 @@ async def rotate_refresh_session(
                     staff_ban = 0
                 WHERE id = ?
                   AND account_status = 'temp_banned'
-                  AND (
-                        ban_until IS NULL OR TRIM(ban_until) = ''
-                        OR datetime(ban_until) <= datetime('now')
-                  )
+                  AND ban_until IS NOT NULL
+                  AND trim(ban_until) != ''
+                  AND datetime(ban_until) <= datetime('now')
                 """,
                 (uid,),
             )
@@ -170,8 +171,10 @@ async def find_blocked_user_for_valid_refresh(
                 COALESCE(NULLIF(TRIM(u.account_status), ''), CASE WHEN u.is_blocked = 1 THEN 'banned' ELSE 'active' END) = 'banned'
                 OR (
                   COALESCE(NULLIF(TRIM(u.account_status), ''), 'active') = 'temp_banned'
-                  AND u.ban_until IS NOT NULL AND TRIM(u.ban_until) != ''
-                  AND datetime(u.ban_until) > datetime('now')
+                  AND (
+                    u.ban_until IS NULL OR TRIM(u.ban_until) = ''
+                    OR datetime(u.ban_until) > datetime('now')
+                  )
                 )
               )
             LIMIT 1

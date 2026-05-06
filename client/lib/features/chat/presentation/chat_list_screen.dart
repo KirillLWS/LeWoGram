@@ -27,6 +27,7 @@ class _ChatListScreenState extends State<ChatListScreen> with AutoRefreshMixin {
   List<ChatItem> _chats = [];
   bool _loading = true;
   String? _error;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 8);
@@ -35,9 +36,14 @@ class _ChatListScreenState extends State<ChatListScreen> with AutoRefreshMixin {
   Future<void> performRefresh() => _loadChats(silent: true);
 
   @override
-  void initState() {
-    super.initState();
-    _loadChats();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadChats();
+    });
   }
 
   /// Загрузка списка с сервера ([ApiClient.getChats]).

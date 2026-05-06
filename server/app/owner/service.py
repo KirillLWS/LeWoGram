@@ -5,6 +5,7 @@ POST /owner/claim и /owner/transfer: токен из INITIAL_OWNER_TOKEN, ат�
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from typing import Any
 
@@ -13,6 +14,8 @@ from fastapi import HTTPException, status
 from app.database.database import Database
 from app.database.db_roles import claim_initial_owner_atomic, hash_initial_owner_token, transfer_owner_atomic
 from app.owner.schemas import OwnerClaimRequest, OwnerTransferRequest, validate_non_owner_role
+
+logger = logging.getLogger(__name__)
 
 
 def _compare_tokens_constant_time(a: str, b: str) -> bool:
@@ -110,3 +113,29 @@ async def transfer_owner(
         raise
 
     return {"ok": True}
+
+
+async def list_server_chats(
+    db: Database,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Чаты сервера (владелец), с пагинацией; только полные строки из БД."""
+    rows = await db.list_all_chats_for_owner(limit=limit, offset=offset)
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        r = dict(raw)
+        if "id" not in r:
+            logger.warning("owner list_server_chats: строка без id, пропуск: %s", raw)
+            continue
+        for key in ("title", "created_at", "updated_at"):
+            if key not in r:
+                logger.warning(
+                    "owner list_server_chats: chat id=%s отсутствует поле %s",
+                    r.get("id"),
+                    key,
+                )
+                r[key] = None
+        out.append(r)
+    return out

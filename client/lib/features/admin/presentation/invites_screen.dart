@@ -25,6 +25,7 @@ class _InvitesScreenState extends State<InvitesScreen> with AutoRefreshMixin {
   bool _creating = false;
   String? _error;
   String? _lastCreatedToken;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 30);
@@ -33,9 +34,14 @@ class _InvitesScreenState extends State<InvitesScreen> with AutoRefreshMixin {
   Future<void> performRefresh() => _refresh(silent: true);
 
   @override
-  void initState() {
-    super.initState();
-    _refresh();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _refresh();
+    });
   }
 
   @override

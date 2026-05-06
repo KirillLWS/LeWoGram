@@ -6,11 +6,20 @@ import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 import 'package:lewogram_client/features/users/data/user_public_profile.dart';
 import 'package:lewogram_client/features/users/presentation/user_profile_screen.dart';
 
+bool _userPublicMapIndicatesBanned(Map<String, dynamic> raw) {
+  final st = raw['account_status'] as String? ?? 'active';
+  if (st == 'banned' || st == 'temp_banned') return true;
+  final ib = raw['is_blocked'];
+  if (ib is num) return ib != 0;
+  if (ib is bool) return ib;
+  return false;
+}
+
 /// Экран переписки по [chatId]. Сообщения подгружаются через [ApiClient.getMessages],
 /// отправка — [ApiClient.sendText].
 ///
 /// [currentUserId] можно передать из списка после [ApiClient.getMe]; если `null`,
-/// экран один раз запросит [/auth/me] в [initState].
+/// экран один раз запросит [/auth/me] при первом [didChangeDependencies].
 ///
 /// Заголовок AppBar: приоритет локального переименования → [initialDisplayTitle] →
 /// [initialTitle] → peer → «Чат #id».
@@ -77,11 +86,26 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   /// Защита от параллельных POST /messages/mark-read.
   bool _markReadInProgress = false;
 
+  /// Личный чат: собеседник под санкцией — блокируем ввод.
+  bool _peerComposeBlocked = false;
+  String? _peerComposeHint;
+  bool _initialized = false;
+
   @override
   void initState() {
     super.initState();
     _currentUserId = widget.currentUserId;
-    _initUserAndMessages();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _initUserAndMessages();
+    });
   }
 
   String get _appBarTitle {
@@ -128,6 +152,9 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
         return;
       }
     }
+    if (mounted && _isDirectChat()) {
+      await _refreshPeerComposeGate();
+    }
     await _loadMessages();
   }
 
@@ -160,6 +187,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
         _error = null;
       });
       await _syncMarkReadIfNeeded();
+      await _refreshPeerComposeGate();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -207,6 +235,18 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   }
 
   Future<void> _send() async {
+    if (_peerComposeBlocked) {
+      final hint = _peerComposeHint?.trim();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hint != null && hint.isNotEmpty ? hint : 'Нельзя отправить сообщение: аккаунт заблокирован',
+          ),
+        ),
+      );
+      return;
+    }
     final text = _textCtrl.text.trim();
     if (text.isEmpty) return;
     try {
@@ -246,6 +286,52 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       if (sid != null && sid != me) return sid;
     }
     return null;
+  }
+
+  Future<void> _refreshPeerComposeGate() async {
+    if (!mounted || !_isDirectChat()) return;
+    final pid = _resolvedPeerUserId();
+    if (pid == null) {
+      setState(() {
+        _peerComposeBlocked = false;
+        _peerComposeHint = null;
+      });
+      return;
+    }
+    try {
+      final raw = Map<String, dynamic>.from(
+        await widget.apiClient.getUserPublic(pid) as Map,
+      );
+      if (!mounted) return;
+      final banned = _userPublicMapIndicatesBanned(raw);
+      final reason = raw['ban_reason'] as String? ?? '';
+      setState(() {
+        _peerComposeBlocked = banned;
+        _peerComposeHint = banned
+            ? (reason.trim().isNotEmpty ? reason.trim() : 'Собеседник заблокирован')
+            : null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      setState(() {
+        _peerComposeBlocked = false;
+        _peerComposeHint = null;
+      });
+    } on UnauthorizedException catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _peerComposeBlocked = false;
+        _peerComposeHint = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      setState(() {
+        _peerComposeBlocked = false;
+        _peerComposeHint = null;
+      });
+    }
   }
 
   Future<void> _openPeerProfile() async {
@@ -485,52 +571,80 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                 ),
           ),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _textCtrl,
-                      decoration: InputDecoration(
-                        hintText: 'Сообщение…',
-                        filled: true,
-                        fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: cs.outlineVariant),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: cs.primary, width: 1.5),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        isDense: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_isDirectChat() && _peerComposeBlocked)
+                  Material(
+                    color: cs.errorContainer.withValues(alpha: 0.35),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: cs.onErrorContainer, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _peerComposeHint ??
+                                  (_peerComposeBlocked ? 'Нельзя отправлять сообщения' : ''),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      minLines: 1,
-                      maxLines: 4,
-                      textCapitalization: TextCapitalization.sentences,
-                      onSubmitted: (_) => _send(),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  FilledButton(
-                    onPressed: _send,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.all(14),
-                      shape: const CircleBorder(),
-                    ),
-                    child: const Icon(Icons.send, size: 20),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _textCtrl,
+                          enabled: !_peerComposeBlocked,
+                          decoration: InputDecoration(
+                            hintText: 'Сообщение…',
+                            filled: true,
+                            fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide(color: cs.outlineVariant),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide(color: cs.primary, width: 1.5),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            isDense: true,
+                          ),
+                          minLines: 1,
+                          maxLines: 4,
+                          textCapitalization: TextCapitalization.sentences,
+                          onSubmitted: (_) => _send(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      FilledButton(
+                        onPressed: _peerComposeBlocked ? null : _send,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.all(14),
+                          shape: const CircleBorder(),
+                        ),
+                        child: const Icon(Icons.send, size: 20),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],
@@ -579,18 +693,23 @@ class _ChatRenameDialogState extends State<_ChatRenameDialog> {
         onSubmitted: (_) {
           final t = _controller.text.trim();
           if (t.isEmpty) return;
+          if (!mounted) return;
           Navigator.pop(context, t);
         },
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (!mounted) return;
+            Navigator.pop(context);
+          },
           child: const Text('Отмена'),
         ),
         FilledButton(
           onPressed: () {
             final t = _controller.text.trim();
             if (t.isEmpty) return;
+            if (!mounted) return;
             Navigator.pop(context, t);
           },
           child: const Text('Сохранить'),

@@ -88,6 +88,7 @@ class UserResponse(BaseModel):
     last_seen_at: str | None = None
     must_change_password: bool = False
     roles: list[str] = Field(default_factory=list)
+    primary_role: str = "user"
     account_status: str = "active"
     ban_until: str | None = None
     ban_reason: str = ""

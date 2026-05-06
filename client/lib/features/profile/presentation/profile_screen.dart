@@ -88,6 +88,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
   String? _error;
   late List<String> _roles;
   bool _loadingRoles = false;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 60);
@@ -107,7 +108,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
   void initState() {
     super.initState();
     _roles = List<String>.from(widget.initialRoles);
-    _loadMe();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadMe();
+    });
   }
 
   Future<void> _syncRoles() async {
@@ -121,8 +132,12 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
         _roles = List<String>.from(next);
         _loadingRoles = false;
       });
-    } catch (_) {
-      if (mounted) setState(() => _loadingRoles = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingRoles = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось обновить роли: $e')),
+      );
     }
   }
 
@@ -187,13 +202,25 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
     await _openEditSheet(user);
   }
 
+  Future<void> _saveProfileDefault(
+    String displayName,
+    String username,
+    String about,
+  ) async {
+    await widget.apiClient.patchMe(
+      displayName: displayName,
+      username: username,
+      about: about,
+    );
+  }
+
   Future<void> _openEditSheet(ProfileUser user) async {
     final saved = await showEditProfileSheet(
       context,
       initialDisplayName: user.displayName?.trim() ?? '',
       initialUsername: user.username,
       initialAbout: user.about?.trim() ?? '',
-      onSave: widget.onSaveProfile,
+      onSave: widget.onSaveProfile ?? _saveProfileDefault,
     );
     if (saved == true && mounted) await _loadMe();
   }

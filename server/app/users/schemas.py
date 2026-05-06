@@ -15,6 +15,7 @@ class UserMeResponse(BaseModel):
     avatar_url: str | None = None
     avatar_exists: bool = False
     roles: list[str] = Field(default_factory=list)
+    primary_role: str = "user"
 
 
 class PatchUserMeRequest(BaseModel):
@@ -37,6 +38,9 @@ class UserPublicResponse(BaseModel):
     avatar_exists: bool = False
     relation_to_me: str = "none"
     friend_request_id: int | None = None
+    account_status: str = "active"
+    ban_until: str | None = None
+    primary_role: str = "user"
 
 
 class UserSearchResult(BaseModel):

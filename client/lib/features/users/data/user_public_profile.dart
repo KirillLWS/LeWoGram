@@ -8,8 +8,11 @@ class UserPublicProfile {
     this.displayName,
     this.about,
     this.avatarPath,
+    this.accountStatus,
+    this.banUntil,
     this.relationToMe,
     this.friendRequestId,
+    this.primaryRole,
   });
 
   final int id;
@@ -18,9 +21,16 @@ class UserPublicProfile {
   final String? about;
   final String? avatarPath;
 
+  /// Статус аккаунта (напр. banned / temp_banned).
+  final String? accountStatus;
+  final String? banUntil;
+
   /// Из [GET /users/{id}] при наличии (опционально).
   final String? relationToMe;
   final int? friendRequestId;
+
+  /// Авторитетная роль с сервера ([primary_role]).
+  final String? primaryRole;
 
   factory UserPublicProfile.fromJson(Map<String, dynamic> json) {
     int? reqId;
@@ -31,6 +41,10 @@ class UserPublicProfile {
     final trimmedPath = rawPath?.trim();
     final avatarPath =
         trimmedPath != null && trimmedPath.isNotEmpty ? trimmedPath : null;
+    final rawPrimary = json['primary_role'];
+    final primaryRole = rawPrimary is String && rawPrimary.trim().isNotEmpty
+        ? rawPrimary.trim()
+        : null;
     return UserPublicProfile(
       id: (json['id'] as num).toInt(),
       username: json['username'] as String? ?? '',
@@ -39,6 +53,9 @@ class UserPublicProfile {
       avatarPath: avatarPath,
       relationToMe: json['relation_to_me'] as String?,
       friendRequestId: reqId,
+      accountStatus: json['account_status'] as String?,
+      banUntil: json['ban_until'] as String?,
+      primaryRole: primaryRole,
     );
   }
 
@@ -60,5 +77,6 @@ class UserPublicProfile {
         if (avatarPath != null) 'avatar_path': avatarPath,
         if (relationToMe != null) 'relation_to_me': relationToMe,
         if (friendRequestId != null) 'friend_request_id': friendRequestId,
+        if (primaryRole != null) 'primary_role': primaryRole,
       };
 }

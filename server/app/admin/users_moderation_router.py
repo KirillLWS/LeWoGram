@@ -55,9 +55,10 @@ async def admin_unban_user(
     staff: Annotated[dict, Depends(require_moderation_staff)],
     db: Annotated[Database, Depends(get_db)],
 ) -> AdminUserListItem:
-    _ = staff
+    actor_id = int(staff["id"])
     return await users_mod_svc.apply_staff_unban(
         db,
+        actor_id=actor_id,
         target_user_id=user_id,
     )
 

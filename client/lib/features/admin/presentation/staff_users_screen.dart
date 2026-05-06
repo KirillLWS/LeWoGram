@@ -18,11 +18,17 @@ class _StaffUsersListViewState extends State<StaffUsersListView> {
   String? _error;
   int _offset = 0;
   static const _pageSize = 40;
+  bool _initialized = false;
 
   @override
-  void initState() {
-    super.initState();
-    _load(reset: true);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load(reset: true);
+    });
   }
 
   @override

@@ -106,13 +106,7 @@ async def create_request(
         )
 
     uid = int(user["id"])
-    user = await ban_policy.materialize_user_ban(db, user)
-    blocked = ban_policy.account_block_payload(user)
-    if blocked is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=blocked,
-        )
+    user = await ban_policy.ensure_not_banned(db, user)
 
     ok = False
     if pw:
@@ -189,6 +183,10 @@ async def create_request(
 
 
 async def cancel(db: Database, user_id: int, request_id: int) -> dict[str, bool]:
+    actor = await db.get_user_by_id(user_id)
+    if actor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, actor)
     ok = await db_device_transfer.update_status_cancelled(db.db_path, request_id, user_id)
     if not ok:
         raise HTTPException(
@@ -200,6 +198,10 @@ async def cancel(db: Database, user_id: int, request_id: int) -> dict[str, bool]
 
 async def deny(db: Database, actor_id: int, request_id: int, note: str | None) -> dict[str, bool]:
     await _verify_actor_admin(db, actor_id)
+    admin_row = await db.get_user_by_id(actor_id)
+    if admin_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, admin_row)
     row = await db_device_transfer.get_request_by_id(db.db_path, request_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Запрос не найден")
@@ -235,6 +237,10 @@ async def approve(
     revoke_old: bool,
 ) -> dict[str, bool]:
     await _verify_actor_admin(db, actor_id)
+    admin_row = await db.get_user_by_id(actor_id)
+    if admin_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, admin_row)
     row = await db_device_transfer.get_request_by_id(db.db_path, request_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Запрос не найден")
@@ -247,6 +253,8 @@ async def approve(
     user = await db.get_user_by_id(uid)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+
+    await ban_policy.ensure_not_banned(db, user)
 
     login = str(user["login"])
     req_fp = str(row["req_device_fingerprint"]).strip()
@@ -296,20 +304,34 @@ async def approve(
 
 async def list_pending_for_admin(db: Database, actor_id: int) -> list[dict[str, Any]]:
     await _verify_actor_admin(db, actor_id)
-    return await db_device_transfer.list_pending_all(db.db_path)
+    raw = await db_device_transfer.list_pending_all(db.db_path)
+    return raw if isinstance(raw, list) else []
 
 
 async def admin_overview(db: Database, actor_id: int) -> dict[str, Any]:
     """Активные pending и история для UI администратора."""
     await _verify_actor_admin(db, actor_id)
+    pending = await db_device_transfer.list_pending_all(db.db_path)
+    history = await db_device_transfer.list_admin_history(db.db_path)
     return {
-        "pending": await db_device_transfer.list_pending_all(db.db_path),
-        "history": await db_device_transfer.list_admin_history(db.db_path),
+        "pending": pending if isinstance(pending, list) else [],
+        "history": history if isinstance(history, list) else [],
     }
 
 
-async def list_my_requests(db: Database, user_id: int) -> list[dict[str, Any]]:
-    return await db_device_transfer.list_my_requests(db.db_path, user_id)
+async def list_my_requests(db: Database, user_id: int) -> dict[str, Any]:
+    rows = await db_device_transfer.list_my_requests(db.db_path, user_id)
+    if not isinstance(rows, list):
+        rows = []
+    pending: list[dict[str, Any]] = []
+    history: list[dict[str, Any]] = []
+    for r in rows:
+        st = str(r.get("status") or "").strip().lower()
+        if st == "pending":
+            pending.append(r)
+        else:
+            history.append(r)
+    return {"pending": pending, "history": history}
 
 
 async def poll(db: Database, request_id: int, code_plain: str) -> DeviceTransferPollOut:

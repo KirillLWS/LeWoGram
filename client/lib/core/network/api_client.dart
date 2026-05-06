@@ -92,7 +92,14 @@ class ApiClient {
           }
         }
       }
-    } catch (_) {}
+    } catch (e, st) {
+      developer.log(
+        '_extractErrorMessage: parse failed',
+        error: e,
+        stackTrace: st,
+        name: 'lewogram.api_client',
+      );
+    }
     return 'Ошибка сервера';
   }
 
@@ -502,8 +509,8 @@ class ApiClient {
     }
   }
 
-  /// [GET /device-transfer/my]
-  Future<List<dynamic>> deviceTransferMy() async {
+  /// [GET /device-transfer/my] → `{ pending: [], history: [] }`.
+  Future<Map<String, dynamic>> deviceTransferMy() async {
     final uri = _uri('/device-transfer/my');
     try {
       final resp = await _authorizedJsonRequest(
@@ -516,7 +523,15 @@ class ApiClient {
         );
       }
       final data = jsonDecode(utf8.decode(resp.bodyBytes));
-      if (data is List<dynamic>) return data;
+      if (data is Map) {
+        final m = Map<String, dynamic>.from(data);
+        final p = m['pending'];
+        final h = m['history'];
+        return {
+          'pending': p is List ? p : <dynamic>[],
+          'history': h is List ? h : <dynamic>[],
+        };
+      }
       throw ApiException('Неверный ответ сервера');
     } on SocketException catch (e) {
       throw ApiException('Нет сети: ${e.message}');
@@ -629,6 +644,134 @@ class ApiClient {
       throw ApiException('Сеть: ${e.message}');
     } on FormatException catch (e) {
       throw ApiException('Неверный JSON /auth/me: ${e.message}');
+    }
+  }
+
+  /// [PATCH /users/me]
+  Future<Map<String, dynamic>> patchMe({
+    String? displayName,
+    String? username,
+    String? about,
+  }) async {
+    final uri = _uri('/users/me');
+    final body = <String, dynamic>{};
+    if (displayName != null) body['display_name'] = displayName;
+    if (username != null) body['username'] = username;
+    if (about != null) body['about'] = about;
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.patch(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        ),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ сервера: ${e.message}');
+    }
+  }
+
+  /// [POST /reports]
+  Future<Map<String, dynamic>> createReport({
+    required String targetType,
+    int? targetUserId,
+    int? targetMessageId,
+    String reasonCode = 'other',
+    String description = '',
+  }) async {
+    final uri = _uri('/reports');
+    final body = jsonEncode({
+      'target_type': targetType,
+      'target_user_id': targetUserId,
+      'target_message_id': targetMessageId,
+      'reason_code': reasonCode,
+      'description': description,
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: body,
+        ),
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ сервера: ${e.message}');
+    }
+  }
+
+  /// [GET /owner/server-chats] — только owner. [limit] макс. 100, [offset] пагинация.
+  Future<List<dynamic>> ownerServerChats({int limit = 50, int offset = 0}) async {
+    final uri = _uri('/owner/server-chats', {
+      'limit': '$limit',
+      'offset': '$offset',
+    });
+    try {
+      final resp = await _authorizedJsonRequest(
+        (headers) => _http.get(uri, headers: headers),
+      );
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (data is Map) {
+        final inner = data['data'];
+        if (inner is List<dynamic>) return inner;
+      }
+      if (data is List<dynamic>) return data;
+      throw ApiException('Неверный ответ сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ сервера: ${e.message}');
+    }
+  }
+
+  /// GET `/` на базовом URL (без /auth и т.д.).
+  Future<Map<String, dynamic>> fetchRootHealth() async {
+    final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$base/');
+    try {
+      final resp = await _http.get(uri);
+      if (resp.statusCode != 200) {
+        throw ApiException('HTTP ${resp.statusCode}', statusCode: resp.statusCode);
+      }
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (data is Map<String, dynamic>) return data;
+      return {'raw': data};
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ: ${e.message}');
     }
   }
 

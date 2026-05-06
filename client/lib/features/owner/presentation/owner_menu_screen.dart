@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:lewogram_client/features/owner/data/transfer_ownership_result.dart';
+import 'package:lewogram_client/app/app_scope.dart';
+import 'package:lewogram_client/features/admin/presentation/admin_hub_screen.dart';
+import 'package:lewogram_client/features/developer/presentation/developer_hub_screen.dart';
 import 'package:lewogram_client/features/owner/presentation/owner_chats_tab.dart';
 import 'package:lewogram_client/features/owner/presentation/owner_users_tab.dart';
-import 'package:lewogram_client/features/owner/presentation/transfer_ownership_dialog.dart';
 
-/// Меню владельца: вкладки «Пользователи» и «Чаты».
+/// Меню владельца: пользователи, чаты и админ-инструменты (superset внутри Owner).
 class OwnerMenuScreen extends StatefulWidget {
   const OwnerMenuScreen({
     super.key,
     this.onJoinChatAsParticipant,
-    this.onTransferOwnership,
   });
 
   /// Вступить в чат как обычный участник (отдельно от режима модерации).
   final void Function(String chatId)? onJoinChatAsParticipant;
-
-  /// Подтверждение передачи владения из диалога.
-  final void Function(TransferOwnershipResult result)? onTransferOwnership;
 
   @override
   State<OwnerMenuScreen> createState() => _OwnerMenuScreenState();
@@ -29,7 +26,7 @@ class _OwnerMenuScreenState extends State<OwnerMenuScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -38,16 +35,10 @@ class _OwnerMenuScreenState extends State<OwnerMenuScreen>
     super.dispose();
   }
 
-  Future<void> _openTransferDialog() async {
-    final result = await showTransferOwnershipDialog(context);
-    if (result != null && mounted) {
-      widget.onTransferOwnership?.call(result);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final api = AppScope.of(context).apiClient;
 
     return Scaffold(
       appBar: AppBar(
@@ -57,19 +48,13 @@ class _OwnerMenuScreenState extends State<OwnerMenuScreen>
             fontWeight: FontWeight.w600,
           ),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Передать владение',
-            onPressed:
-                widget.onTransferOwnership == null ? null : _openTransferDialog,
-            icon: const Icon(Icons.swap_horiz),
-          ),
-        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
             Tab(text: 'Пользователи'),
             Tab(text: 'Чаты'),
+            Tab(text: 'Админ'),
+            Tab(text: 'Dev'),
           ],
         ),
       ),
@@ -78,8 +63,11 @@ class _OwnerMenuScreenState extends State<OwnerMenuScreen>
         children: [
           const OwnerUsersTab(),
           OwnerChatsTab(
+            apiClient: api,
             onJoinAsParticipant: widget.onJoinChatAsParticipant,
           ),
+          const AdminHubBody(),
+          const DeveloperHubBody(),
         ],
       ),
     );

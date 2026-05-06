@@ -9,9 +9,11 @@ from fastapi import HTTPException, UploadFile, status
 
 import aiosqlite
 
+from app.auth import ban_policy
 from app.avatar_fields import apply_avatar_fields
 from app.config.config import AVATAR_MAX_BYTES, USER_ABOUT_MAX_LEN, media_dir
 from app.database.database import Database
+from app.database.db_roles import highest_role_from_list
 from app.users.schemas import PatchUserMeRequest, UserMeResponse, UserPublicResponse, UserSearchResult
 from app.friends.service import get_status_response
 
@@ -70,6 +72,7 @@ async def _me_response(db: Database, user: dict[str, Any]) -> UserMeResponse:
     un = user.get("username")
     username = str(un).strip() if un is not None and str(un).strip() else login
     roles = await db.list_user_roles(uid)
+    primary_role = highest_role_from_list(roles)
     u = dict(user)
     apply_avatar_fields(u)
     return UserMeResponse(
@@ -82,6 +85,7 @@ async def _me_response(db: Database, user: dict[str, Any]) -> UserMeResponse:
         avatar_url=u.get("avatar_url"),
         avatar_exists=bool(u.get("avatar_exists")),
         roles=roles,
+        primary_role=primary_role,
     )
 
 
@@ -103,6 +107,11 @@ async def get_me(db: Database, user: dict[str, Any]) -> UserMeResponse:
 
 async def patch_me(db: Database, user: dict[str, Any], body: PatchUserMeRequest) -> UserMeResponse:
     uid = int(user["id"])
+    gate = await db.get_user_by_id(uid)
+    if gate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, gate)
+
     data = body.model_dump(exclude_unset=True)
     if not data:
         fresh = await db.get_user_by_id(uid)
@@ -165,8 +174,21 @@ async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> User
     row = await db.get_user_public_profile(user_id)
     if row is None or int(row.get("is_blocked", 0)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
-    d = {k: row[k] for k in ("id", "username", "display_name", "about", "avatar_path")}
+    d = {
+        k: row[k]
+        for k in (
+            "id",
+            "username",
+            "display_name",
+            "about",
+            "avatar_path",
+            "account_status",
+            "ban_until",
+        )
+    }
     apply_avatar_fields(d)
+    roles = await db.list_user_roles(user_id)
+    d["primary_role"] = highest_role_from_list(roles)
     st = await get_status_response(db, viewer_id, user_id)
     d["relation_to_me"] = st.relation
     d["friend_request_id"] = st.request_id
@@ -175,6 +197,11 @@ async def get_public_profile(db: Database, viewer_id: int, user_id: int) -> User
 
 async def upload_avatar(db: Database, user: dict[str, Any], file: UploadFile) -> UserMeResponse:
     uid = int(user["id"])
+    gate = await db.get_user_by_id(uid)
+    if gate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, gate)
+
     filename = (file.filename or "").lower()
     ext = ""
     if "." in filename:

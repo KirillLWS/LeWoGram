@@ -188,6 +188,14 @@ async def refresh_access_token(
         )
     uid = int(meta["user_id"])
     login = str(meta["login"])
+    active = await db.get_user_by_id(uid)
+    active = await ban_policy.ensure_not_banned(db, active)
+    if active is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Пользователь не найден",
+        )
+
     access = create_access_token(uid, login)
     return TokenResponse(
         access_token=access,
@@ -242,17 +250,11 @@ async def get_current_user(token: str, db: Database) -> dict[str, Any]:
         )
 
     user = await db.get_user_by_id(uid)
-    user = await ban_policy.materialize_user_ban(db, user)
+    user = await ban_policy.ensure_not_banned(db, user)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Пользователь не найден",
-        )
-    blocked = ban_policy.account_block_payload(user)
-    if blocked is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=blocked,
         )
     return user
 
@@ -348,14 +350,11 @@ async def login_user(
 
     uid = int(user["id"])
 
-    user = await ban_policy.materialize_user_ban(db, user)
-    blocked = ban_policy.account_block_payload(user)
-    if blocked is not None:
+    try:
+        user = await ban_policy.ensure_not_banned(db, user)
+    except HTTPException:
         await db.add_login_log(uid, fp, client_ip, False)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=blocked,
-        )
+        raise
 
     if not verify_password(body.password, user["password_hash"]):
         await db.add_login_log(uid, fp, client_ip, False)
@@ -430,6 +429,8 @@ async def change_password(
     user = await db.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+
+    user = await ban_policy.ensure_not_banned(db, user)
 
     if not verify_password(body.old_password, user["password_hash"]):
         raise HTTPException(

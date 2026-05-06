@@ -52,9 +52,16 @@ async def post_cancel(
 async def get_my(
     user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[Database, Depends(get_db)],
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     uid = int(user["id"])
-    return await dtr_service.list_my_requests(db, uid)
+    out = await dtr_service.list_my_requests(db, uid)
+    pending = out.get("pending")
+    history = out.get("history")
+    if not isinstance(pending, list):
+        pending = []
+    if not isinstance(history, list):
+        history = []
+    return {"pending": pending, "history": history}
 
 
 @router.get("/pending")
@@ -73,26 +80,20 @@ async def get_admin_overview(
 ) -> dict[str, Any]:
     """Ожидающие заявки и история (операционный персонал), без poll-токенов."""
     uid = int(user["id"])
-    logger.info("device_transfer GET /admin-overview start actor_id=%s", uid)
     try:
         out = await dtr_service.admin_overview(db, uid)
-        pending = out.get("pending")
-        history = out.get("history")
-        n_p = len(pending) if isinstance(pending, list) else 0
-        n_h = len(history) if isinstance(history, list) else 0
-        logger.info(
-            "device_transfer GET /admin-overview ok actor_id=%s pending=%s history=%s",
-            uid,
-            n_p,
-            n_h,
-        )
-        return out
     except Exception:
         logger.exception(
             "device_transfer GET /admin-overview failed actor_id=%s",
             uid,
         )
         raise
+    pending = out.get("pending")
+    history = out.get("history")
+    return {
+        "pending": pending if isinstance(pending, list) else [],
+        "history": history if isinstance(history, list) else [],
+    }
 
 
 @router.post("/{request_id}/approve")

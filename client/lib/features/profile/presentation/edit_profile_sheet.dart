@@ -44,6 +44,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
   }
 
   Future<void> _submit() async {
+    if (_saving) return;
     final fn = widget.onSave;
     if (fn == null) {
       if (!mounted) return;

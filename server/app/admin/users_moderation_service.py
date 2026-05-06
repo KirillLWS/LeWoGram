@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -14,8 +14,12 @@ from app.admin.users_moderation_schemas import (
     AdminUserListResponse,
     StaffBanRequest,
 )
+from app.admin.staff_moderation_guard import assert_staff_may_ban_target
 from app.database import db_auth_sessions
 from app.database.database import Database
+
+_STAFF_BAN_DURATION_MIN_MINUTES = 1
+_STAFF_BAN_DURATION_MAX_MINUTES = 20 * 365 * 24 * 60  # 20 лет
 
 
 def _row_to_list_item(row: dict[str, Any]) -> AdminUserListItem:
@@ -60,17 +64,8 @@ async def apply_staff_ban(
     target_user_id: int,
     body: StaffBanRequest,
 ) -> AdminUserListItem:
-    if actor_id == target_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Нельзя заблокировать самого себя",
-        )
-    target = await db.get_user_by_id(target_user_id)
-    if target is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Пользователь не найден",
-        )
+    await assert_staff_may_ban_target(db, actor_id=actor_id, target_user_id=target_user_id)
+
     reason = body.reason.strip() if body.reason else ""
 
     if body.kind == "temporary":
@@ -79,7 +74,13 @@ async def apply_staff_ban(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Для временной блокировки укажите duration_minutes",
             )
-        until = (timezone.utc.now() + timedelta(minutes=int(body.duration_minutes))).strftime(
+        dm = int(body.duration_minutes)
+        if dm < _STAFF_BAN_DURATION_MIN_MINUTES or dm > _STAFF_BAN_DURATION_MAX_MINUTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"duration_minutes: от {_STAFF_BAN_DURATION_MIN_MINUTES} до {_STAFF_BAN_DURATION_MAX_MINUTES}",
+            )
+        until = (datetime.now(timezone.utc) + timedelta(minutes=dm)).strftime(
             "%Y-%m-%d %H:%M:%S",
         )
         await db.staff_set_temp_ban(target_user_id, reason, until)
@@ -96,15 +97,10 @@ async def apply_staff_ban(
 async def apply_staff_unban(
     db: Database,
     *,
+    actor_id: int,
     target_user_id: int,
 ) -> AdminUserListItem:
-    target = await db.get_user_by_id(target_user_id)
-    if target is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Пользователь не найден",
-        )
-    _ = target
+    await assert_staff_may_ban_target(db, actor_id=actor_id, target_user_id=target_user_id)
     await db.staff_unban(target_user_id)
     fresh = await db.get_user_by_id(target_user_id)
     if fresh is None:

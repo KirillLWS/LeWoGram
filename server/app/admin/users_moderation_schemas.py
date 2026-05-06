@@ -39,8 +39,8 @@ class StaffBanRequest(BaseModel):
     duration_minutes: int | None = Field(
         default=None,
         ge=1,
-        le=525_600,
-        description="Для kind=temporary: длительность в минутах (макс. 1 год).",
+        le=10_512_000,
+        description="Для kind=temporary: минуты (макс. 20 лет).",
     )
 
 

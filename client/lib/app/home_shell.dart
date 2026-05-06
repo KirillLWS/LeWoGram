@@ -28,6 +28,21 @@ List<String> _parseRolesFromMe(Map<String, dynamic> m) {
   return <String>[];
 }
 
+String? _parsePrimaryRoleFromMe(Map<String, dynamic> m) {
+  final p = m['primary_role'];
+  if (p == null) return null;
+  final s = p.toString().trim();
+  return s.isEmpty ? null : s;
+}
+
+List<String> _rolesListFromMe(Map<String, dynamic> m) {
+  final primary = _parsePrimaryRoleFromMe(m);
+  if (primary != null && primary.trim().isNotEmpty) {
+    return [primary.trim()];
+  }
+  return _parseRolesFromMe(m);
+}
+
 class _NavTab {
   const _NavTab({
     required this.icon,
@@ -55,6 +70,8 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
   List<String> _roles = <String>[];
+  String? _serverPrimaryRole;
+  bool _initialized = false;
 
   /// Число входящих заявок в друзья (бейдж на вкладке «Друзья»).
   final ValueNotifier<int> _friendsIncomingCount = ValueNotifier<int>(0);
@@ -68,10 +85,19 @@ class _HomeShellState extends State<HomeShell> {
       final list = await api.friendsIncoming();
       if (!mounted) return;
       _friendsIncomingCount.value = list.length;
-    } catch (_) {}
+    } catch (e, st) {
+      assert(() {
+        debugPrint('friendsIncoming: $e\n$st');
+        return true;
+      }());
+    }
   }
 
-  List<_NavTab> _tabDefinitions(BuildContext context, AppScope scope) {
+  List<_NavTab> _tabDefinitions(
+    BuildContext context,
+    AppScope scope,
+    String? serverPrimaryRole,
+  ) {
     final api = scope.apiClient;
     return <_NavTab>[
       _NavTab(
@@ -143,7 +169,7 @@ class _HomeShellState extends State<HomeShell> {
           loadRoles: () async {
             try {
               final m = await api.getMe();
-              return _parseRolesFromMe(m);
+              return _rolesListFromMe(m);
             } on ApiException catch (_) {
               return List<String>.from(_roles);
             } on UnauthorizedException catch (_) {
@@ -152,7 +178,10 @@ class _HomeShellState extends State<HomeShell> {
               return List<String>.from(_roles);
             }
           },
-          invitesEligibility: RoleAccess.canManageInvitesAndDeviceTransfers,
+          invitesEligibility: (roles) => RoleAccess.canManageInvitesAndDeviceTransfers(
+            roles,
+            serverPrimaryRole: serverPrimaryRole,
+          ),
           onOpenInvites: () {
             Navigator.of(context).pushNamed('/invites');
           },
@@ -208,6 +237,13 @@ class _HomeShellState extends State<HomeShell> {
           onAvatarPicked: (localPath) async {
             await api.uploadAvatar(File(localPath));
           },
+          onSaveProfile: (displayName, username, about) async {
+            await api.patchMe(
+              displayName: displayName,
+              username: username,
+              about: about,
+            );
+          },
           onLogout: () async {
             await scope.tokenStorage.clearToken();
             await AccountStorage.clear();
@@ -220,29 +256,38 @@ class _HomeShellState extends State<HomeShell> {
         icon: Icons.admin_panel_settings_outlined,
         selectedIcon: Icons.admin_panel_settings,
         label: 'Админ',
-        visibleFor: RoleAccess.canOpenAdminHub,
+        visibleFor: (roles) => RoleAccess.showAdminNav(
+          roles,
+          serverPrimaryRole: serverPrimaryRole,
+        ),
         builder: () => const AdminHubScreen(),
       ),
       _NavTab(
         icon: Icons.verified_user_outlined,
         selectedIcon: Icons.verified_user,
         label: 'Владелец',
-        visibleFor: RoleAccess.canOpenOwnerHub,
+        visibleFor: (roles) => RoleAccess.showOwnerNav(
+          roles,
+          serverPrimaryRole: serverPrimaryRole,
+        ),
         builder: () => const OwnerHubScreen(),
       ),
       _NavTab(
         icon: Icons.developer_mode_outlined,
         selectedIcon: Icons.developer_mode,
-        label: 'Разработка',
-        visibleFor: RoleAccess.canOpenDeveloperHub,
+        label: 'Dev',
+        visibleFor: (roles) => RoleAccess.showDeveloperNav(
+          roles,
+          serverPrimaryRole: serverPrimaryRole,
+        ),
         builder: () => const DeveloperHubScreen(),
       ),
     ];
   }
 
-  List<_NavTab> _visibleTabs(List<String> roles) {
+  List<_NavTab> _visibleTabs(List<String> roles, String? serverPrimaryRole) {
     final scope = AppScope.of(context);
-    return _tabDefinitions(context, scope)
+    return _tabDefinitions(context, scope, serverPrimaryRole)
         .where((t) => t.visibleFor(roles))
         .toList();
   }
@@ -253,8 +298,10 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _bootstrap();
@@ -275,10 +322,12 @@ class _HomeShellState extends State<HomeShell> {
       final m = await api.getMe();
       if (!mounted) return;
       await AccountStorage.upsert(m);
-      final next = _parseRolesFromMe(m);
+      final primary = _parsePrimaryRoleFromMe(m);
+      final next = _rolesListFromMe(m);
       setState(() {
         _roles = next;
-        final visible = _visibleTabs(next);
+        _serverPrimaryRole = primary;
+        final visible = _visibleTabs(next, _serverPrimaryRole);
         _index = visible.isEmpty ? 0 : _index.clamp(0, visible.length - 1);
         _invalidatePagesCache();
       });
@@ -287,7 +336,8 @@ class _HomeShellState extends State<HomeShell> {
       if (!mounted) return;
       setState(() {
         _roles = <String>[];
-        final visible = _visibleTabs(_roles);
+        _serverPrimaryRole = null;
+        final visible = _visibleTabs(_roles, _serverPrimaryRole);
         _index = visible.isEmpty ? 0 : _index.clamp(0, visible.length - 1);
         _invalidatePagesCache();
       });
@@ -295,7 +345,8 @@ class _HomeShellState extends State<HomeShell> {
       if (!mounted) return;
       setState(() {
         _roles = <String>[];
-        final visible = _visibleTabs(_roles);
+        _serverPrimaryRole = null;
+        final visible = _visibleTabs(_roles, _serverPrimaryRole);
         _index = visible.isEmpty ? 0 : _index.clamp(0, visible.length - 1);
         _invalidatePagesCache();
       });
@@ -303,7 +354,8 @@ class _HomeShellState extends State<HomeShell> {
       if (!mounted) return;
       setState(() {
         _roles = <String>[];
-        final visible = _visibleTabs(_roles);
+        _serverPrimaryRole = null;
+        final visible = _visibleTabs(_roles, _serverPrimaryRole);
         _index = visible.isEmpty ? 0 : _index.clamp(0, visible.length - 1);
         _invalidatePagesCache();
       });
@@ -328,7 +380,7 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
     final api = scope.apiClient;
-    final tabs = _visibleTabs(_roles);
+    final tabs = _visibleTabs(_roles, _serverPrimaryRole);
     final tabSig = tabs.map((e) => e.label).join('|');
 
     if (_pagesCacheKey != tabSig || _cachedPages == null) {

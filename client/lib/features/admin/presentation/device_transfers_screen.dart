@@ -18,11 +18,22 @@ class _DeviceTransfersScreenState extends State<DeviceTransfersScreen> {
   String? _error;
   List<Map<String, dynamic>> _pending = [];
   List<Map<String, dynamic>> _history = [];
+  bool _initialized = false;
 
   @override
   void initState() {
     super.initState();
-    _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   List<Map<String, dynamic>> _coerceRowList(dynamic raw) {

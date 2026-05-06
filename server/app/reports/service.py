@@ -10,6 +10,7 @@ from app.database.db_reports import (
     create_report,
 )
 from app.database.database import Database
+from app.auth import ban_policy
 
 
 async def submit_report(
@@ -22,6 +23,11 @@ async def submit_report(
     reason_code: str,
     description: str,
 ) -> int:
+    reporter = await db.get_user_by_id(reporter_id)
+    if reporter is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    await ban_policy.ensure_not_banned(db, reporter)
+
     tt = target_type.strip().lower()
     uid = target_user_id
     mid = target_message_id
@@ -37,11 +43,11 @@ async def submit_report(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="target_message_id не используется для user/profile",
             )
-        target = await db.get_user_public_profile(uid)
-        if target is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
         if uid == reporter_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя пожаловаться на себя")
+        target = await db.get_user_by_id(uid)
+        if target is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
 
     elif tt == "message":
         if mid is None:

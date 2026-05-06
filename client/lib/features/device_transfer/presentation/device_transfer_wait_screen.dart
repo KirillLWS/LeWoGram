@@ -28,13 +28,26 @@ class _DeviceTransferWaitScreenState extends State<DeviceTransferWaitScreen> {
   String? _statusText;
   String? _error;
   bool _done = false;
+  bool _pollingStarted = false;
+  ApiClient? _api;
 
   @override
   void initState() {
     super.initState();
     _statusText = 'Ожидание подтверждения…';
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _pollOnce());
-    unawaited(_pollOnce());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_pollingStarted) return;
+    _pollingStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _api = AppScope.of(context).apiClient;
+      _timer = Timer.periodic(const Duration(seconds: 5), (_) => _pollOnce());
+      unawaited(_pollOnce());
+    });
   }
 
   @override
@@ -45,7 +58,8 @@ class _DeviceTransferWaitScreenState extends State<DeviceTransferWaitScreen> {
 
   Future<void> _pollOnce() async {
     if (!mounted || _done) return;
-    final api = AppScope.of(context).apiClient;
+    final api = _api;
+    if (api == null) return;
 
     try {
       final m = await api.deviceTransferPoll(

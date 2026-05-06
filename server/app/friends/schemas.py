@@ -29,6 +29,11 @@ class FriendUserSnippet(BaseModel):
     avatar_path: str | None = None
     avatar_url: str | None = None
     avatar_exists: bool = False
+    account_status: str = "active"
+    ban_until: str | None = None
+    ban_reason: str = ""
+    is_banned: bool = False
+    is_permanent_ban: bool = False
 
 
 class FriendRequestItem(BaseModel):

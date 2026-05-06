@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.auth import ban_policy
 from app.avatar_fields import apply_avatar_fields
 from app.database.database import Database
 from app.messages.schemas import (
@@ -22,6 +23,38 @@ from app.messages.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _ensure_user_not_banned_for_api(db: Database, user_id: int) -> None:
+    row = await db.get_user_by_id(user_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден",
+        )
+    await ban_policy.ensure_not_banned(db, row)
+
+
+async def _raise_if_peer_blocked_for_messaging(db: Database, peer_row: dict[str, Any]) -> None:
+    u = await ban_policy.materialize_user_ban(db, dict(peer_row))
+    if u is None:
+        return
+    if ban_policy.account_block_payload(u) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Собеседник заблокирован — отправка сообщений недоступна",
+        )
+
+
+async def _raise_if_user_blocked_for_contact(db: Database, user_row: dict[str, Any]) -> None:
+    u = await ban_policy.materialize_user_ban(db, dict(user_row))
+    if u is None:
+        return
+    if ban_policy.account_block_payload(u) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь заблокирован — личный чат недоступен",
+        )
 
 
 def _as_bool(v: Any) -> bool:
@@ -161,6 +194,7 @@ async def create_direct_chat(
     body: CreateDirectChatRequest,
 ) -> ChatResponse:
     """Личный чат 1:1; при существующем direct между этой парой — возвращает его."""
+    await _ensure_user_not_banned_for_api(db, current_user_id)
     other = body.other_user_id
     if other == current_user_id:
         raise HTTPException(
@@ -174,6 +208,8 @@ async def create_direct_chat(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Пользователь не найден",
         )
+
+    await _raise_if_user_blocked_for_contact(db, other_user)
 
     existing_id = await db.find_direct_chat_id_between(current_user_id, other)
     if existing_id is not None:
@@ -204,6 +240,7 @@ async def create_group_chat(
     body: CreateGroupChatRequest,
 ) -> ChatResponse:
     """Групповой чат: создатель — owner, member_ids — участники (без дубликатов)."""
+    await _ensure_user_not_banned_for_api(db, current_user_id)
     seen: set[int] = set()
     for mid in body.member_ids:
         if mid == current_user_id or mid in seen:
@@ -243,6 +280,8 @@ async def send_text_message(
             detail="Текст сообщения не может быть пустым",
         )
 
+    await _ensure_user_not_banned_for_api(db, current_user_id)
+
     member = await db.get_chat_member(body.chat_id, current_user_id)
     if member is None:
         raise HTTPException(
@@ -262,6 +301,13 @@ async def send_text_message(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Нельзя отправлять сообщения в этот канал",
         )
+
+    if str(chat.get("type")) == "direct":
+        peer_snippet = await db.get_direct_chat_peer_user(body.chat_id, current_user_id)
+        if peer_snippet:
+            peer_full = await db.get_user_by_id(int(peer_snippet["id"]))
+            if peer_full is not None:
+                await _raise_if_peer_blocked_for_messaging(db, peer_full)
 
     msg_id = await db.create_message(
         body.chat_id,
@@ -324,6 +370,7 @@ async def patch_chat(
     body: PatchChatRequest,
 ) -> ChatResponse:
     """Обновить title и при необходимости description; direct — любой участник, иначе — owner."""
+    await _ensure_user_not_banned_for_api(db, current_user_id)
     member = await db.get_chat_member(chat_id, current_user_id)
     if member is None:
         raise HTTPException(
@@ -385,6 +432,7 @@ async def mark_chat_as_read(
     """
     Прочитать все сообщения чата до message_id включительно + обновить last_read_message_id в настройках.
     """
+    await _ensure_user_not_banned_for_api(db, current_user_id)
     member = await db.get_chat_member(body.chat_id, current_user_id)
     if member is None:
         raise HTTPException(

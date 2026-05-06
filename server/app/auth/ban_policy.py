@@ -7,6 +7,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException, status
+
 from app.database.database import Database
 
 
@@ -50,9 +52,28 @@ def remaining_seconds_until(ban_until: str | None) -> int | None:
     return max(0, sec)
 
 
+async def ensure_not_banned(db: Database, user: dict[str, Any] | None) -> dict[str, Any] | None:
+    """
+    Единая точка для pre-auth и auth: актуализирует temp-бан и бросает HTTP 403 с телом account_blocked.
+    Возвращает пользователя, если активен; None только если на входе user is None.
+    """
+    if user is None:
+        return None
+    u = await materialize_user_ban(db, user)
+    if u is None:
+        return None
+    payload = account_block_payload(u)
+    if payload is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=payload)
+    return u
+
+
 async def materialize_user_ban(db: Database, user: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     Снимает истёкший temp_banned в БД и возвращает актуальную строку пользователя.
+
+    temp_banned без даты окончания (ban_until пустой) не снимается автоматически
+    (нет условия «NULL истёк» — постоянный по смыслу блок до смены статуса в БД).
     """
     if user is None:
         return None
@@ -62,12 +83,10 @@ async def materialize_user_ban(db: Database, user: dict[str, Any] | None) -> dic
         return user
     bu = user.get("ban_until")
     if bu is None or str(bu).strip() == "":
-        await db.clear_expired_temp_ban(uid)
-        return await db.get_user_by_id(uid)
+        return user
     end = _parse_ban_until(str(bu))
     if end is None:
-        await db.clear_expired_temp_ban(uid)
-        return await db.get_user_by_id(uid)
+        return user
     if datetime.now(timezone.utc) >= end:
         await db.clear_expired_temp_ban(uid)
         return await db.get_user_by_id(uid)
@@ -76,8 +95,9 @@ async def materialize_user_ban(db: Database, user: dict[str, Any] | None) -> dic
 
 def account_block_payload(user: dict[str, Any]) -> dict[str, Any] | None:
     """
-    Если вход/API для этого пользователя запрещён — тело для HTTP 403 (как detail).
-    Иначе None.
+    Если вход/API для этого пользователя запрещён — тело ответа HTTP 403 (без обёртки detail).
+
+    Формат фиксированный: code, ban_until, reason, is_permanent.
     """
     st = _status(user)
     if st == "active":
@@ -86,18 +106,22 @@ def account_block_payload(user: dict[str, Any]) -> dict[str, Any] | None:
     if st == "banned":
         return {
             "code": "account_blocked",
-            "account_status": "banned",
             "reason": reason,
             "ban_until": None,
-            "remaining_seconds": None,
+            "is_permanent": True,
         }
     if st == "temp_banned":
-        rem = remaining_seconds_until(str(user.get("ban_until") or ""))
+        bu = user.get("ban_until")
+        bu_out: str | None
+        if bu is None:
+            bu_out = None
+        else:
+            s = str(bu).strip()
+            bu_out = s if s else None
         return {
             "code": "account_blocked",
-            "account_status": "temp_banned",
             "reason": reason,
-            "ban_until": user.get("ban_until"),
-            "remaining_seconds": rem,
+            "ban_until": bu_out,
+            "is_permanent": False,
         }
     return None

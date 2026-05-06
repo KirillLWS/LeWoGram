@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 
 import aiosqlite
@@ -16,6 +17,38 @@ VALID_ROLES: frozenset[str] = frozenset(ALL_ROLES)
 
 # Операционный персонал: инвайты, смена устройства и т.п. Иерархия прав: owner ≥ chief_admin ≥ admin ≥ user.
 OPERATIONAL_STAFF_ROLES: frozenset[str] = frozenset({"owner", "chief_admin", "admin"})
+
+# Иерархия для staff-бана и UI (одна «главная» роль = максимум по рангу).
+ROLE_HIERARCHY_RANK: dict[str, int] = {
+    "user": 0,
+    "developer": 1,
+    "admin": 2,
+    "chief_admin": 3,
+    "owner": 4,
+}
+
+
+def role_rank(role: str) -> int:
+    return ROLE_HIERARCHY_RANK.get(str(role).strip().lower(), -1)
+
+
+def highest_role_from_list(roles: list[str]) -> str:
+    """Наивысшая роль из списка user_roles (пустой список → user)."""
+    if not roles:
+        return "user"
+    return max(roles, key=lambda r: role_rank(r))
+
+
+def actor_may_staff_ban_target(actor_roles: list[str], target_roles: list[str]) -> tuple[bool, str]:
+    """
+    Запрет бана равного или более высокого по рангу пользователя.
+    Роли берутся только из user_roles в БД.
+    """
+    ar = highest_role_from_list(actor_roles)
+    tr = highest_role_from_list(target_roles)
+    if role_rank(tr) >= role_rank(ar):
+        return False, "Нельзя заблокировать пользователя с ролью не ниже вашей"
+    return True, ""
 
 
 def rbac_granted_intersects_required(
@@ -34,11 +67,75 @@ def rbac_granted_intersects_required(
 async def rbac_user_has_any_role(
     db_path: Path,
     user_id: int,
-    required_roles: frozenset[str],
+    roles: Iterable[str],
 ) -> bool:
-    """Проверка доступа по user_roles в БД — основной async-entrypoint для RBAC."""
+    """Проверка доступа по user_roles в БД — единый async-entrypoint для RBAC."""
+    req = frozenset(str(r).strip().lower() for r in roles if r is not None and str(r).strip())
+    if not req:
+        return False
     granted = await list_user_roles(db_path, user_id)
-    return rbac_granted_intersects_required(granted, required_roles)
+    return rbac_granted_intersects_required(granted, req)
+
+
+async def set_single_role(
+    db_path: Path,
+    *,
+    target_user_id: int,
+    role: str,
+    actor_user_id: int | None = None,
+    record_history: bool = True,
+    conn: aiosqlite.Connection | None = None,
+) -> None:
+    """
+    Ровно одна роль у пользователя: удаляет все строки user_roles для user_id, назначает [role].
+    """
+    r = str(role).strip().lower()
+    if r not in VALID_ROLES:
+        raise ValueError("invalid_role")
+
+    async def _apply(c: aiosqlite.Connection) -> None:
+        async with c.execute(
+            "SELECT role FROM user_roles WHERE user_id = ?",
+            (target_user_id,),
+        ) as cur:
+            old_roles = [str(x[0]) for x in await cur.fetchall()]
+        await c.execute("DELETE FROM user_roles WHERE user_id = ?", (target_user_id,))
+        if record_history:
+            for orole in old_roles:
+                await append_role_history(
+                    db_path,
+                    target_user_id=target_user_id,
+                    actor_user_id=actor_user_id,
+                    role=orole,
+                    action="revoke",
+                    conn=c,
+                )
+        await c.execute(
+            "INSERT INTO user_roles (user_id, role) VALUES (?, ?)",
+            (target_user_id, r),
+        )
+        if record_history:
+            await append_role_history(
+                db_path,
+                target_user_id=target_user_id,
+                actor_user_id=actor_user_id,
+                role=r,
+                action="grant",
+                conn=c,
+            )
+
+    if conn is not None:
+        await _apply(conn)
+        return
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _apply(db)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 def hash_initial_owner_token(token: str) -> str:
@@ -63,12 +160,20 @@ async def list_user_ids_with_any_role(db_path: Path, roles: tuple[str, ...]) -> 
     return [int(r[0]) for r in rows]
 
 
-async def list_user_roles(db_path: Path, user_id: int) -> list[str]:
+async def list_user_roles(
+    db_path: Path,
+    user_id: int,
+    *,
+    conn: aiosqlite.Connection | None = None,
+) -> list[str]:
+    sql = "SELECT role FROM user_roles WHERE user_id = ? ORDER BY role"
+    params = (user_id,)
+    if conn is not None:
+        async with conn.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        return [str(r[0]) for r in rows]
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute(
-            "SELECT role FROM user_roles WHERE user_id = ? ORDER BY role",
-            (user_id,),
-        ) as cur:
+        async with db.execute(sql, params) as cur:
             rows = await cur.fetchall()
     return [str(r[0]) for r in rows]
 
@@ -139,40 +244,8 @@ async def grant_role(
     record_history: bool = True,
     conn: aiosqlite.Connection | None = None,
 ) -> bool:
-    """Returns True if row was inserted (new grant)."""
-    if conn is not None:
-        cur = await conn.execute(
-            "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, ?)",
-            (target_user_id, role),
-        )
-        inserted = cur.rowcount > 0
-        if inserted and record_history:
-            await append_role_history(
-                db_path,
-                target_user_id=target_user_id,
-                actor_user_id=actor_user_id,
-                role=role,
-                action="grant",
-                conn=conn,
-            )
-        return inserted
-
-    async with aiosqlite.connect(db_path) as db:
-        cur = await db.execute(
-            "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, ?)",
-            (target_user_id, role),
-        )
-        inserted = cur.rowcount > 0
-        if inserted and record_history:
-            await db.execute(
-                """
-                INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
-                VALUES (?, ?, ?, 'grant')
-                """,
-                (target_user_id, actor_user_id, role),
-            )
-        await db.commit()
-    return inserted
+    """Отключено: назначение ролей только через [set_single_role]."""
+    raise RuntimeError("grant_role is disabled; use set_single_role exclusively")
 
 
 async def revoke_role(
@@ -185,10 +258,11 @@ async def revoke_role(
     conn: aiosqlite.Connection | None = None,
 ) -> bool:
     """Returns True if a row was deleted."""
+    nr = str(role).strip().lower()
     if conn is not None:
         cur = await conn.execute(
             "DELETE FROM user_roles WHERE user_id = ? AND role = ?",
-            (target_user_id, role),
+            (target_user_id, nr),
         )
         deleted = cur.rowcount > 0
         if deleted and record_history:
@@ -196,7 +270,7 @@ async def revoke_role(
                 db_path,
                 target_user_id=target_user_id,
                 actor_user_id=actor_user_id,
-                role=role,
+                role=nr,
                 action="revoke",
                 conn=conn,
             )
@@ -205,7 +279,7 @@ async def revoke_role(
     async with aiosqlite.connect(db_path) as db:
         cur = await db.execute(
             "DELETE FROM user_roles WHERE user_id = ? AND role = ?",
-            (target_user_id, role),
+            (target_user_id, nr),
         )
         deleted = cur.rowcount > 0
         if deleted and record_history:
@@ -214,19 +288,32 @@ async def revoke_role(
                 INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
                 VALUES (?, ?, ?, 'revoke')
                 """,
-                (target_user_id, actor_user_id, role),
+                (target_user_id, actor_user_id, nr),
             )
         await db.commit()
     return deleted
 
 
 async def ensure_default_user_role(db_path: Path, user_id: int) -> None:
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, 'user')",
-            (user_id,),
+    roles = await list_user_roles(db_path, user_id)
+    if not roles:
+        await set_single_role(
+            db_path,
+            target_user_id=user_id,
+            role="user",
+            actor_user_id=None,
+            record_history=False,
         )
-        await db.commit()
+        return
+    if len(roles) > 1:
+        one = highest_role_from_list(roles)
+        await set_single_role(
+            db_path,
+            target_user_id=user_id,
+            role=one,
+            actor_user_id=None,
+            record_history=True,
+        )
 
 
 async def fetch_role_history(
@@ -287,39 +374,21 @@ async def transfer_owner_atomic(
                     await db.rollback()
                     raise ValueError("actor_not_owner")
 
-            await db.execute(
-                "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, 'owner')",
-                (target_user_id,),
+            await set_single_role(
+                db_path,
+                target_user_id=target_user_id,
+                role="owner",
+                actor_user_id=actor_user_id,
+                record_history=True,
+                conn=db,
             )
-            await db.execute(
-                "DELETE FROM user_roles WHERE user_id = ? AND role = 'owner'",
-                (actor_user_id,),
-            )
-            await db.execute(
-                "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, ?)",
-                (actor_user_id, new_self_role),
-            )
-
-            await db.execute(
-                """
-                INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
-                VALUES (?, ?, 'owner', 'grant')
-                """,
-                (target_user_id, actor_user_id),
-            )
-            await db.execute(
-                """
-                INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
-                VALUES (?, ?, 'owner', 'revoke')
-                """,
-                (actor_user_id, actor_user_id),
-            )
-            await db.execute(
-                """
-                INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
-                VALUES (?, ?, ?, 'grant')
-                """,
-                (actor_user_id, actor_user_id, new_self_role),
+            await set_single_role(
+                db_path,
+                target_user_id=actor_user_id,
+                role=new_self_role,
+                actor_user_id=actor_user_id,
+                record_history=True,
+                conn=db,
             )
 
             async with db.execute(
@@ -343,7 +412,6 @@ async def claim_initial_owner_atomic(
     token_hash: str,
 ) -> None:
     """Grants owner to claimer; records singleton claim row."""
-    roles_to_add = ("owner",)
     async with aiosqlite.connect(db_path) as db:
         await db.execute("BEGIN IMMEDIATE")
         try:
@@ -362,19 +430,14 @@ async def claim_initial_owner_atomic(
                 (token_hash, claimer_user_id),
             )
 
-            for r in roles_to_add:
-                cur = await db.execute(
-                    "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, ?)",
-                    (claimer_user_id, r),
-                )
-                if cur.rowcount > 0:
-                    await db.execute(
-                        """
-                        INSERT INTO role_change_history (target_user_id, actor_user_id, role, action)
-                        VALUES (?, ?, ?, 'grant')
-                        """,
-                        (claimer_user_id, claimer_user_id, r),
-                    )
+            await set_single_role(
+                db_path,
+                target_user_id=claimer_user_id,
+                role="owner",
+                actor_user_id=claimer_user_id,
+                record_history=True,
+                conn=db,
+            )
 
             await db.commit()
         except Exception:

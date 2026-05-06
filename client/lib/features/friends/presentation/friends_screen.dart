@@ -112,6 +112,12 @@ String _friendTitle(Map<String, dynamic> u) {
   return 'Пользователь #${u['id']}';
 }
 
+bool _friendSnippetBanned(Map<String, dynamic> u) {
+  if (u['is_banned'] == true) return true;
+  final st = (u['account_status'] as String?) ?? 'active';
+  return st == 'banned' || st == 'temp_banned';
+}
+
 class _FriendsListTab extends StatefulWidget {
   const _FriendsListTab({required this.apiClient});
 
@@ -125,6 +131,7 @@ class _FriendsListTabState extends State<_FriendsListTab> with AutoRefreshMixin 
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   String? _error;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 30);
@@ -133,9 +140,14 @@ class _FriendsListTabState extends State<_FriendsListTab> with AutoRefreshMixin 
   Future<void> performRefresh() => _load(silent: true);
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   Future<void> _load({bool silent = false}) async {
@@ -258,7 +270,20 @@ class _FriendsListTabState extends State<_FriendsListTab> with AutoRefreshMixin 
               ),
             ),
             title: Text(title),
-            subtitle: Text('@${u['username'] ?? ''}'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('@${u['username'] ?? ''}'),
+                if (_friendSnippetBanned(u))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Заблокирован',
+                      style: theme.textTheme.labelSmall?.copyWith(color: cs.error),
+                    ),
+                  ),
+              ],
+            ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -301,6 +326,7 @@ class _IncomingRequestsTabState extends State<_IncomingRequestsTab> with AutoRef
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   String? _error;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 30);
@@ -309,9 +335,14 @@ class _IncomingRequestsTabState extends State<_IncomingRequestsTab> with AutoRef
   Future<void> performRefresh() => _load(silent: true);
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   void _syncBadge() {
@@ -420,6 +451,14 @@ class _IncomingRequestsTabState extends State<_IncomingRequestsTab> with AutoRef
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('@${u['username'] ?? ''}'),
+                if (_friendSnippetBanned(u))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Заблокирован',
+                      style: theme.textTheme.labelSmall?.copyWith(color: cs.error),
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -485,6 +524,7 @@ class _OutgoingRequestsTabState extends State<_OutgoingRequestsTab> with AutoRef
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   String? _error;
+  bool _initialized = false;
 
   @override
   Duration get refreshInterval => const Duration(seconds: 30);
@@ -493,9 +533,14 @@ class _OutgoingRequestsTabState extends State<_OutgoingRequestsTab> with AutoRef
   Future<void> performRefresh() => _load(silent: true);
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   Future<void> _load({bool silent = false}) async {
@@ -592,7 +637,20 @@ class _OutgoingRequestsTabState extends State<_OutgoingRequestsTab> with AutoRef
               ),
             ),
             title: Text(title),
-            subtitle: Text('@${u['username'] ?? ''}'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('@${u['username'] ?? ''}'),
+                if (_friendSnippetBanned(u))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Заблокирован',
+                      style: theme.textTheme.labelSmall?.copyWith(color: cs.error),
+                    ),
+                  ),
+              ],
+            ),
             trailing: OutlinedButton(
               onPressed: () async {
                 final messenger = ScaffoldMessenger.of(context);

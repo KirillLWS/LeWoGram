@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
+import 'package:lewogram_client/features/chat/presentation/chat_avatar.dart';
 
 import '../data/user_public_profile.dart';
 
@@ -25,16 +26,26 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   bool _writeBusy = false;
   bool _relationBusy = false;
+  bool _reportBusy = false;
   String _relation = 'none';
   int? _friendRequestId;
+  bool _initialized = false;
 
   @override
   void initState() {
     super.initState();
     _relation = widget.profile.relationToMe ?? 'none';
     _friendRequestId = widget.profile.friendRequestId;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadFriendRelation();
+      if (!mounted) return;
+      _loadFriendRelation();
     });
   }
 
@@ -50,12 +61,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         _relation = rel;
         _friendRequestId = rid;
       });
-    } on ApiException catch (_) {
+    } on ApiException catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } on UnauthorizedException catch (_) {
       if (!mounted) return;
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -70,6 +83,51 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       await widget.onWrite(widget.profile.id);
     } finally {
       if (mounted) setState(() => _writeBusy = false);
+    }
+  }
+
+  Future<void> _onReport() async {
+    if (_reportBusy) return;
+    final descCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Жалоба на пользователя'),
+        content: TextField(
+          controller: descCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Описание',
+            border: OutlineInputBorder(),
+          ),
+          maxLines: 4,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Отправить')),
+        ],
+      ),
+    );
+    final desc = descCtrl.text.trim();
+    descCtrl.dispose();
+    if (ok != true || !mounted) return;
+
+    setState(() => _reportBusy = true);
+    try {
+      await widget.apiClient.createReport(
+        targetType: 'user',
+        targetUserId: widget.profile.id,
+        description: desc,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Жалоба отправлена')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _reportBusy = false);
     }
   }
 
@@ -109,14 +167,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           padding: const EdgeInsets.all(24),
           children: [
             Center(
-              child: CircleAvatar(
+              child: ChatAvatarCircle(
+                letter: chatAvatarLetter(title),
+                avatarPath: p.avatarPath,
                 radius: 56,
-                backgroundColor: scheme.surfaceContainerHighest,
-                child: Icon(
-                  Icons.person,
-                  size: 64,
-                  color: scheme.onSurfaceVariant,
-                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -135,6 +189,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
               textAlign: TextAlign.center,
             ),
+            if ((p.primaryRole ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Роль: ${_primaryRoleRu(p.primaryRole!.trim())}',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
             if (p.about != null && p.about!.trim().isNotEmpty) ...[
               const SizedBox(height: 24),
               Text(
@@ -143,6 +207,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
             ],
             const SizedBox(height: 24),
+            Text(
+              _accountLine(p),
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
             Text(
               'Статус: ${_relationLabel(_relation)}',
               style: textTheme.bodyMedium?.copyWith(
@@ -162,11 +234,50 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   : const Text('Написать'),
             ),
             const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _reportBusy ? null : _onReport,
+              icon: _reportBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.flag_outlined),
+              label: const Text('Пожаловаться'),
+            ),
+            const SizedBox(height: 12),
             ..._relationButtons(context),
           ],
         ),
       ),
     );
+  }
+
+  String _accountLine(UserPublicProfile p) {
+    final st = p.accountStatus ?? 'active';
+    if (st == 'banned' || st == 'temp_banned') {
+      final bu = p.banUntil?.trim();
+      if (bu != null && bu.isNotEmpty) return 'Аккаунт заблокирован до $bu';
+      return 'Аккаунт заблокирован';
+    }
+    return 'Аккаунт активен';
+  }
+
+  String _primaryRoleRu(String code) {
+    switch (code) {
+      case 'user':
+        return 'Пользователь';
+      case 'developer':
+        return 'Разработчик';
+      case 'admin':
+        return 'Администратор';
+      case 'chief_admin':
+        return 'Главный администратор';
+      case 'owner':
+        return 'Владелец';
+      default:
+        return code;
+    }
   }
 
   String _relationLabel(String r) {

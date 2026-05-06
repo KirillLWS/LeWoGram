@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import aiosqlite
 
@@ -67,7 +67,19 @@ class Database:
         from app.database.user_moderation_migrations import apply_user_moderation_migrations
 
         await apply_user_moderation_migrations(self._db_path)
+        await self._migrate_chats_timeline_index()
         logger.info("База инициализирована: %s", self._db_path)
+
+    async def _migrate_chats_timeline_index(self) -> None:
+        """Индекс для списка чатов владельца (ORDER BY created_at / updated_at)."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats(created_at)",
+            )
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at)",
+            )
+            await db.commit()
 
     async def _migrate_users_username(self) -> None:
         """
@@ -165,10 +177,9 @@ class Database:
                     staff_ban = 0
                 WHERE id = ?
                   AND account_status = 'temp_banned'
-                  AND (
-                        ban_until IS NULL OR trim(ban_until) = ''
-                        OR datetime(ban_until) <= datetime('now')
-                  )
+                  AND ban_until IS NOT NULL
+                  AND trim(ban_until) != ''
+                  AND datetime(ban_until) <= datetime('now')
                 """,
                 (user_id,),
             )
@@ -215,6 +226,7 @@ class Database:
         return [_row_to_dict(r) for r in rows], total
 
     async def staff_set_perm_ban(self, user_id: int, reason: str) -> None:
+        """Staff-бан: только поля аккаунта; связи friends не трогаем."""
         r = (reason or "").strip()
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
@@ -287,7 +299,7 @@ class Database:
         return await db_roles.list_user_roles(self._db_path, user_id)
 
     async def rbac_user_has_any_role(
-        self, user_id: int, required_roles: frozenset[str]
+        self, user_id: int, required_roles: frozenset[str] | Sequence[str]
     ) -> bool:
         from app.database import db_roles
 
@@ -391,13 +403,33 @@ class Database:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 """
-                SELECT id, username, display_name, about, avatar_path, is_blocked
+                SELECT id, username, display_name, about, avatar_path, is_blocked,
+                       account_status, ban_until, ban_reason
                 FROM users WHERE id = ?
                 """,
                 (user_id,),
             ) as cur:
                 row = await cur.fetchone()
         return _row_to_dict(row) if row else None
+
+    async def list_all_chats_for_owner(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        lim = max(1, min(limit, 100))
+        off = max(0, offset)
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT id, type, title, created_by, created_at, updated_at
+                FROM chats
+                ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (lim, off),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     async def create_user(
         self,

@@ -12,6 +12,7 @@ import aiosqlite
 from fastapi import HTTPException, status
 
 from app.avatar_fields import apply_avatar_fields
+from app.auth import ban_policy
 from app.database.database import Database
 from app.friends.schemas import (
     FriendRequestItem,
@@ -63,12 +64,27 @@ async def _fetch_pair_rows(
     return [_row_to_dict(r) for r in rows]
 
 
+def _is_banned_row(d: dict[str, Any]) -> bool:
+    st = str(d.get("account_status") or "active").strip().lower()
+    if st in ("banned", "temp_banned"):
+        return True
+    return bool(int(d.get("is_blocked", 0)))
+
+
+def _apply_friend_ban_metadata(d: dict[str, Any]) -> None:
+    st = str(d.get("account_status") or "active").strip().lower()
+    d["ban_reason"] = str(d.get("ban_reason") or "")
+    d["is_banned"] = _is_banned_row(d)
+    d["is_permanent_ban"] = st == "banned"
+
+
 async def _user_snippet(db_path: Path, user_id: int) -> FriendUserSnippet | None:
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute(
             """
-            SELECT id, username, display_name, avatar_path
+            SELECT id, username, display_name, avatar_path,
+                   account_status, ban_until, ban_reason, is_blocked
             FROM users
             WHERE id = ? AND is_blocked = 0
             """,
@@ -79,20 +95,22 @@ async def _user_snippet(db_path: Path, user_id: int) -> FriendUserSnippet | None
         return None
     d = _row_to_dict(row)
     apply_avatar_fields(d)
-    return FriendUserSnippet(
-        id=int(d["id"]),
-        username=d.get("username"),
-        display_name=d.get("display_name"),
-        avatar_path=d.get("avatar_path"),
-        avatar_url=d.get("avatar_url"),
-        avatar_exists=bool(d.get("avatar_exists")),
-    )
+    d.setdefault("account_status", "active")
+    d.setdefault("ban_until", None)
+    _apply_friend_ban_metadata(d)
+    return FriendUserSnippet.model_validate(d)
 
 
 class FriendsService:
     def __init__(self, db: Database) -> None:
         self._db = db
         self._path = db.db_path
+
+    async def _ensure_actor_not_banned(self, user_id: int) -> None:
+        row = await self._db.get_user_by_id(user_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+        await ban_policy.ensure_not_banned(self._db, row)
 
     async def get_status(self, viewer_id: int, other_id: int) -> dict[str, Any]:
         if viewer_id == other_id:
@@ -129,6 +147,7 @@ class FriendsService:
         return {"relation": "none", "request_id": None}
 
     async def request(self, from_user_id: int, to_user_id: int) -> FriendshipResponse:
+        await self._ensure_actor_not_banned(from_user_id)
         if from_user_id == to_user_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя отправить заявку самому себе")
 
@@ -264,6 +283,7 @@ class FriendsService:
         return f"Пользователь #{user_id}"
 
     async def accept(self, current_user_id: int, request_id: int) -> FriendshipResponse:
+        await self._ensure_actor_not_banned(current_user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
             conn.row_factory = aiosqlite.Row
@@ -297,6 +317,7 @@ class FriendsService:
         return out
 
     async def decline(self, current_user_id: int, request_id: int) -> None:
+        await self._ensure_actor_not_banned(current_user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
             conn.row_factory = aiosqlite.Row
@@ -324,6 +345,7 @@ class FriendsService:
             await conn.commit()
 
     async def cancel(self, from_user_id: int, target_user_id: int) -> None:
+        await self._ensure_actor_not_banned(from_user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
             cur = await conn.execute(
@@ -338,6 +360,7 @@ class FriendsService:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Исходящей заявки нет")
 
     async def remove(self, user_id: int, other_user_id: int) -> None:
+        await self._ensure_actor_not_banned(user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
             cur = await conn.execute(
@@ -356,6 +379,7 @@ class FriendsService:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Дружба не найдена")
 
     async def block(self, from_user_id: int, to_user_id: int) -> None:
+        await self._ensure_actor_not_banned(from_user_id)
         if from_user_id == to_user_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректная операция")
         target = await _user_snippet(self._path, to_user_id)
@@ -382,6 +406,7 @@ class FriendsService:
             await conn.commit()
 
     async def unblock(self, from_user_id: int, to_user_id: int) -> None:
+        await self._ensure_actor_not_banned(from_user_id)
         async with aiosqlite.connect(self._path) as conn:
             await conn.execute("PRAGMA foreign_keys = ON")
             cur = await conn.execute(
@@ -402,7 +427,8 @@ class FriendsService:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
                 """
-                SELECT u.id, u.username, u.display_name, u.avatar_path
+                SELECT u.id, u.username, u.display_name, u.avatar_path,
+                       u.account_status, u.ban_until, u.ban_reason, u.is_blocked
                 FROM friendships f
                 JOIN users u ON u.id = CASE
                     WHEN f.from_user_id = ? THEN f.to_user_id
@@ -410,7 +436,6 @@ class FriendsService:
                 END
                 WHERE f.status = ?
                   AND (f.from_user_id = ? OR f.to_user_id = ?)
-                  AND u.is_blocked = 0
                 ORDER BY f.updated_at DESC
                 LIMIT ?
                 """,
@@ -421,6 +446,7 @@ class FriendsService:
         for r in rows:
             d = _row_to_dict(r)
             apply_avatar_fields(d)
+            _apply_friend_ban_metadata(d)
             out_snippets.append(FriendUserSnippet.model_validate(d))
         return out_snippets
 
@@ -431,7 +457,8 @@ class FriendsService:
             async with conn.execute(
                 """
                 SELECT f.id AS request_id,
-                       u.id AS peer_id, u.username, u.display_name, u.avatar_path
+                       u.id AS peer_id, u.username, u.display_name, u.avatar_path,
+                       u.account_status, u.ban_until, u.ban_reason, u.is_blocked
                 FROM friendships f
                 JOIN users u ON u.id = f.from_user_id
                 WHERE f.to_user_id = ? AND f.status = ? AND u.is_blocked = 0
@@ -448,8 +475,13 @@ class FriendsService:
                 "username": d.get("username"),
                 "display_name": d.get("display_name"),
                 "avatar_path": d.get("avatar_path"),
+                "account_status": d.get("account_status") or "active",
+                "ban_until": d.get("ban_until"),
+                "ban_reason": d.get("ban_reason"),
+                "is_blocked": d.get("is_blocked", 0),
             }
             apply_avatar_fields(sn)
+            _apply_friend_ban_metadata(sn)
             out.append(
                 FriendRequestItem(
                     request_id=int(d["request_id"]),
@@ -465,7 +497,8 @@ class FriendsService:
             async with conn.execute(
                 """
                 SELECT f.id AS request_id,
-                       u.id AS peer_id, u.username, u.display_name, u.avatar_path
+                       u.id AS peer_id, u.username, u.display_name, u.avatar_path,
+                       u.account_status, u.ban_until, u.ban_reason, u.is_blocked
                 FROM friendships f
                 JOIN users u ON u.id = f.to_user_id
                 WHERE f.from_user_id = ? AND f.status = ? AND u.is_blocked = 0
@@ -482,8 +515,13 @@ class FriendsService:
                 "username": d.get("username"),
                 "display_name": d.get("display_name"),
                 "avatar_path": d.get("avatar_path"),
+                "account_status": d.get("account_status") or "active",
+                "ban_until": d.get("ban_until"),
+                "ban_reason": d.get("ban_reason"),
+                "is_blocked": d.get("is_blocked", 0),
             }
             apply_avatar_fields(sn)
+            _apply_friend_ban_metadata(sn)
             out.append(
                 FriendRequestItem(
                     request_id=int(d["request_id"]),
