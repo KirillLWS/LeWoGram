@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/core/theme/app_themes.dart';
 import 'package:lewogram_client/features/device_transfer/presentation/device_transfer_my_requests_screen.dart';
+import 'package:lewogram_client/features/support/presentation/support_tickets_screen.dart';
 
 /// Настройки приложения: выбор темы и сброс к стандартной.
 class SettingsScreen extends StatelessWidget {
@@ -42,6 +43,22 @@ class SettingsScreen extends StatelessWidget {
                         Navigator.of(context).push<void>(
                           MaterialPageRoute<void>(
                             builder: (_) => const DeviceTransferMyRequestsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: Icon(Icons.support_agent, color: scheme.primary),
+                      title: const Text('Связь с поддержкой'),
+                      subtitle: const Text(
+                        'Тикеты поддержки: создавать новые, читать ответы',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SupportTicketsScreen(),
                           ),
                         );
                       },

@@ -742,6 +742,126 @@ class ApiClient {
     }
   }
 
+  /// [POST /messages/support/tickets] — создать новый тикет поддержки.
+  Future<Map<String, dynamic>> createSupportTicket({String? subject}) async {
+    final uri = _uri('/messages/support/tickets');
+    final body = jsonEncode({if (subject != null) 'subject': subject});
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.post(
+        uri,
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: body,
+      ),
+    );
+    if (resp.statusCode != 200 && resp.statusCode != 201) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map<String, dynamic>) return decoded;
+    throw ApiException('Неверный ответ сервера');
+  }
+
+  /// [GET /messages/support/tickets/mine] — мои тикеты.
+  Future<List<dynamic>> listMySupportTickets() async {
+    final uri = _uri('/messages/support/tickets/mine');
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.get(uri, headers: headers),
+    );
+    if (resp.statusCode != 200) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map && decoded['data'] is List) {
+      return decoded['data'] as List<dynamic>;
+    }
+    throw ApiException('Неверный ответ сервера');
+  }
+
+  /// [GET /messages/support/tickets/all] — все тикеты (staff).
+  Future<List<dynamic>> listAllSupportTickets() async {
+    final uri = _uri('/messages/support/tickets/all');
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.get(uri, headers: headers),
+    );
+    if (resp.statusCode != 200) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map && decoded['data'] is List) {
+      return decoded['data'] as List<dynamic>;
+    }
+    throw ApiException('Неверный ответ сервера');
+  }
+
+  /// [GET /messages/support/tickets/{id}] — состояние одного тикета.
+  Future<Map<String, dynamic>> getSupportTicket(int chatId) async {
+    final uri = _uri('/messages/support/tickets/$chatId');
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.get(uri, headers: headers),
+    );
+    if (resp.statusCode != 200) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map<String, dynamic>) return decoded;
+    throw ApiException('Неверный ответ сервера');
+  }
+
+  /// [POST /messages/support/tickets/{id}/mark] — закрыть/реоткрыть со своей стороны.
+  Future<Map<String, dynamic>> markSupportTicket(int chatId, String state) async {
+    final uri = _uri('/messages/support/tickets/$chatId/mark');
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.post(
+        uri,
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'state': state}),
+      ),
+    );
+    if (resp.statusCode != 200) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map<String, dynamic>) return decoded;
+    throw ApiException('Неверный ответ сервера');
+  }
+
+  /// [POST /messages/support/tickets/{id}/finalize] — chief_admin/owner.
+  Future<Map<String, dynamic>> finalizeSupportTicket(
+      int chatId, String action) async {
+    final uri = _uri('/messages/support/tickets/$chatId/finalize');
+    final resp = await _authorizedJsonRequest(
+      (headers) => _http.post(
+        uri,
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'action': action}),
+      ),
+    );
+    if (resp.statusCode != 200) {
+      throw ApiException(
+        _extractErrorMessage(resp.body),
+        statusCode: resp.statusCode,
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    if (decoded is Map<String, dynamic>) return decoded;
+    throw ApiException('Неверный ответ сервера');
+  }
+
   /// [GET /owner/server-chats] — только owner. [limit] макс. 100, [offset] пагинация.
   Future<List<dynamic>> ownerServerChats(
       {int limit = 50, int offset = 0}) async {

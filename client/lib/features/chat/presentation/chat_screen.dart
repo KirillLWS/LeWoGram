@@ -113,6 +113,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _initUserAndMessages();
+      _loadTicketStatus();
     });
   }
 
@@ -292,6 +293,151 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   }
 
   bool _isSupportChat() => widget.chatType?.trim().toLowerCase() == 'support';
+
+  bool _isSupportTicket() =>
+      widget.chatType?.trim().toLowerCase() == 'support_ticket';
+
+  Map<String, dynamic>? _ticket;
+
+  Future<void> _loadTicketStatus() async {
+    if (!_isSupportTicket()) return;
+    try {
+      final t = await widget.apiClient.getSupportTicket(widget.chatId);
+      if (!mounted) return;
+      setState(() => _ticket = t);
+    } catch (_) {
+      // молча: баннер просто не появится
+    }
+  }
+
+  Future<void> _markTicket(String state) async {
+    try {
+      final t = await widget.apiClient.markSupportTicket(widget.chatId, state);
+      if (!mounted) return;
+      setState(() => _ticket = t);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _finalizeTicket(String action) async {
+    try {
+      final t =
+          await widget.apiClient.finalizeSupportTicket(widget.chatId, action);
+      if (!mounted) return;
+      setState(() => _ticket = t);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(action == 'close'
+              ? 'Тикет окончательно закрыт'
+              : 'Тикет открыт заново'),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Widget? _buildTicketBanner(BuildContext context) {
+    if (!_isSupportTicket()) return null;
+    final t = _ticket;
+    if (t == null) return null;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final st = (t['support_status'] as String? ?? 'open').toLowerCase();
+    final me = _currentUserId;
+    final requesterId = (t['support_user_id'] as num?)?.toInt();
+    final isMyTicket = me != null && requesterId == me;
+    final finalized = st == 'closed_finalized';
+    String label;
+    Color color;
+    switch (st) {
+      case 'open':
+        label = 'Тикет открыт';
+        color = cs.primary;
+        break;
+      case 'user_closed':
+        label = 'Закрыт пользователем';
+        color = cs.secondary;
+        break;
+      case 'admin_closed':
+        label = 'Закрыт поддержкой';
+        color = cs.secondary;
+        break;
+      case 'both_closed':
+        label = 'Закрыт обеими сторонами — ждёт финального решения';
+        color = cs.tertiary;
+        break;
+      case 'closed_finalized':
+        label = 'Тикет окончательно закрыт';
+        color = cs.onSurfaceVariant;
+        break;
+      default:
+        label = st;
+        color = cs.outline;
+    }
+    final myClosed = isMyTicket
+        ? (st == 'user_closed' || st == 'both_closed' || finalized)
+        : (st == 'admin_closed' || st == 'both_closed' || finalized);
+    return Material(
+      color: cs.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.support_agent, color: color, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                if (!finalized)
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _markTicket(myClosed ? 'reopen' : 'closed'),
+                    icon: Icon(myClosed
+                        ? Icons.lock_open_outlined
+                        : Icons.check_circle_outline),
+                    label: Text(myClosed
+                        ? 'Открыть со своей стороны'
+                        : 'Закрыть со своей стороны'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _finalizeTicket(finalized ? 'reopen' : 'close'),
+                  icon: Icon(finalized
+                      ? Icons.refresh
+                      : Icons.gavel_outlined),
+                  label: Text(finalized
+                      ? 'Реоткрыть (chief/owner)'
+                      : 'Финальное закрытие (chief/owner)'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// Одноразовые координаты для client_meta; при отказе или ошибке — без полей geo_*.
   Future<void> _mergeOneShotGeoIntoMeta(Map<String, dynamic> meta) async {
@@ -705,6 +851,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       ),
       body: Column(
         children: [
+          if (_buildTicketBanner(context) != null) _buildTicketBanner(context)!,
           if (_error != null && _messages.isEmpty)
             Padding(
               padding: const EdgeInsets.all(8),

@@ -384,11 +384,15 @@ async def list_user_chats(db: Database, current_user_id: int) -> list[ChatRespon
     Список чатов с превью последнего сообщения и числом непрочитанных входящих
     (по таблице message_reads).
     """
-    await support_chat_util.ensure_user_in_support_chat(db, current_user_id)
     rows = await db.get_user_chats(current_user_id)
     out: list[ChatResponse] = []
     for r in rows:
         d = dict(r)
+        # Чаты поддержки — отдельный поток (Settings → "Связь с поддержкой"
+        # для пользователей; раздел "Поддержка" для admin/chief_admin/owner).
+        ctype = (d.get("type") or "").lower()
+        if ctype in {"support", "support_ticket"}:
+            continue
         cid = int(d["id"])
         last = await db.get_last_message_for_chat(cid)
         if last:

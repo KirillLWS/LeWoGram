@@ -8,6 +8,7 @@ import 'package:lewogram_client/features/admin/presentation/invites_screen.dart'
 import 'package:lewogram_client/features/admin/presentation/support_access_sessions_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/staff_users_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/support_diagnostics_screen.dart';
+import 'package:lewogram_client/features/support/presentation/admin_support_tickets_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/support_login_logs_screen.dart';
 import 'package:lewogram_client/features/chat/data/chat_models.dart';
 import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
@@ -76,6 +77,23 @@ class AdminHubBody extends StatelessWidget {
                           builder: (ctx) => InvitesScreen(
                             apiClient: AppScope.of(ctx).apiClient,
                           ),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading:
+                        Icon(Icons.support_agent, color: scheme.primary),
+                    title: const Text('Поддержка'),
+                    subtitle: const Text(
+                      'Все тикеты поддержки, сгруппированные по пользователям',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const AdminSupportTicketsScreen(),
                         ),
                       );
                     },

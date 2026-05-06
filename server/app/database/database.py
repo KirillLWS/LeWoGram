@@ -85,6 +85,9 @@ class Database:
         from app.database.live_geo_migrations import apply_live_geo_migrations
 
         await apply_live_geo_migrations(self._db_path)
+        from app.database.support_tickets_migrations import apply_support_tickets_migrations
+
+        await apply_support_tickets_migrations(self._db_path)
         await self._migrate_chats_timeline_index()
         logger.info("База инициализирована: %s", self._db_path)
 

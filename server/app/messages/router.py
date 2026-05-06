@@ -8,6 +8,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
+from pydantic import BaseModel, Field
+
 from app.auth.dependencies import get_current_user, get_db
 from app.database.database import Database
 from app.messages.schemas import (
@@ -20,6 +22,19 @@ from app.messages.schemas import (
     SendTextMessageRequest,
 )
 from app.messages import service as messages_service
+from app.messages import support_tickets
+
+
+class CreateSupportTicketRequest(BaseModel):
+    subject: str | None = Field(default=None, max_length=120)
+
+
+class TicketStateRequest(BaseModel):
+    state: str = Field(..., pattern="^(closed|reopen)$")
+
+
+class TicketFinalizeRequest(BaseModel):
+    action: str = Field(..., pattern="^(close|reopen)$")
 
 router = APIRouter()
 
@@ -98,6 +113,85 @@ async def mark_read_endpoint(
     """Отметить сообщения в чате прочитанными до указанного id включительно."""
     uid = int(user["id"])
     return await messages_service.mark_chat_as_read(db, uid, body)
+
+
+@router.post("/support/tickets")
+async def create_support_ticket_endpoint(
+    body: CreateSupportTicketRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    """Создать новый тикет поддержки. Все админы и владелец автоматически получают доступ."""
+    uid = int(user["id"])
+    return await support_tickets.create_support_ticket(db, uid, subject=body.subject)
+
+
+@router.get("/support/tickets/mine")
+async def list_my_support_tickets_endpoint(
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    uid = int(user["id"])
+    rows = await support_tickets.list_my_tickets(db, uid)
+    return {"data": rows}
+
+
+@router.get("/support/tickets/all")
+async def list_all_support_tickets_endpoint(
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    """Список всех тикетов (для staff: admin / chief_admin / owner)."""
+    from app.database.db_roles import list_user_roles, OPERATIONAL_STAFF_ROLES
+    uid = int(user["id"])
+    roles = {r.lower() for r in await list_user_roles(db.db_path, uid)}
+    if not (roles & OPERATIONAL_STAFF_ROLES):
+        from fastapi import HTTPException, status as st
+        raise HTTPException(
+            status_code=st.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав",
+        )
+    rows = await support_tickets.list_all_tickets_for_staff(db)
+    return {"data": rows}
+
+
+@router.get("/support/tickets/{chat_id}")
+async def get_support_ticket(
+    chat_id: int,
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    uid = int(user["id"])
+    t = await support_tickets.get_ticket_for_user(db, chat_id, uid)
+    if t is None:
+        from fastapi import HTTPException, status as st
+        raise HTTPException(
+            status_code=st.HTTP_404_NOT_FOUND,
+            detail="Тикет не найден или нет доступа",
+        )
+    return t
+
+
+@router.post("/support/tickets/{chat_id}/mark")
+async def mark_support_ticket_state(
+    chat_id: int,
+    body: TicketStateRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    uid = int(user["id"])
+    return await support_tickets.mark_ticket_state(db, chat_id, uid, state=body.state)
+
+
+@router.post("/support/tickets/{chat_id}/finalize")
+async def finalize_support_ticket(
+    chat_id: int,
+    body: TicketFinalizeRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[Database, Depends(get_db)],
+) -> dict:
+    uid = int(user["id"])
+    return await support_tickets.finalize_ticket(db, chat_id, uid, action=body.action)
 
 
 @router.get("/{chat_id}", response_model=list[MessageResponse])
