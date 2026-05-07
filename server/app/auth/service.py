@@ -306,13 +306,6 @@ async def register_user(
     await invite_module.use_invite(db, body.invite_token, user_id)
     await db.create_user_settings(user_id)
 
-    try:
-        from app.messages.support_chat import ensure_user_in_support_chat
-
-        await ensure_user_in_support_chat(db, user_id)
-    except Exception:
-        logger.warning("Не удалось добавить user_id=%s в чат поддержки", user_id, exc_info=True)
-
     await db.log_event(
         user_id,
         "registered",

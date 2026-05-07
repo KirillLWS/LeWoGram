@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lewogram_client/core/device/support_telemetry.dart';
 import 'package:lewogram_client/core/refresh/auto_refresh_mixin.dart';
 import 'package:lewogram_client/core/network/api_client.dart';
-import 'package:lewogram_client/features/chat/data/chat_models.dart';
-import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
+import 'package:lewogram_client/features/support/presentation/support_tickets_screen.dart';
 import 'package:lewogram_client/features/profile/data/profile_user.dart';
 import 'package:lewogram_client/features/profile/presentation/edit_profile_sheet.dart';
 import 'package:lewogram_client/features/profile/presentation/profile_avatar.dart';
@@ -255,36 +254,12 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
     }
   }
 
-  Future<void> _openSupportChat() async {
-    try {
-      final me = await widget.apiClient.getMe();
-      if (!mounted) return;
-      final primary = me['primary_role']?.toString().trim();
-      final staff = {'owner', 'chief_admin', 'admin'}.contains(primary);
-      final raw = await widget.apiClient.getSupportChat();
-      if (!mounted) return;
-      final m = Map<String, dynamic>.from(raw);
-      final id = (m['id'] as num).toInt();
-      final title = ChatItem.fromJson(m).resolvedTitle;
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(
-            chatId: id,
-            apiClient: widget.apiClient,
-            chatType: 'support',
-            allowSupportStaffReply: staff,
-            initialDisplayTitle: title,
-          ),
-        ),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.message)));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    }
+  Future<void> _openSupportTickets() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const SupportTicketsScreen(),
+      ),
+    );
   }
 
   Future<void> _submitDiagnosticSheet() async {
@@ -689,10 +664,10 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefreshMixin {
                                     color: scheme.primary),
                                 title: const Text('Поддержка'),
                                 subtitle: const Text(
-                                  'Общий чат: напишите вопрос; ответ по цитате — у модераторов',
+                                  'Тикеты: создать запрос и переписка с поддержкой',
                                 ),
                                 trailing: const Icon(Icons.chevron_right),
-                                onTap: _openSupportChat,
+                                onTap: _openSupportTickets,
                               ),
                               ListTile(
                                 leading: Icon(Icons.bug_report_outlined,

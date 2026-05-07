@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:lewogram_client/app/app_scope.dart';
-import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/core/storage/account_storage.dart';
 import 'package:lewogram_client/features/admin/presentation/audit_events_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/device_transfers_screen.dart';
@@ -10,38 +9,6 @@ import 'package:lewogram_client/features/admin/presentation/staff_users_screen.d
 import 'package:lewogram_client/features/admin/presentation/support_diagnostics_screen.dart';
 import 'package:lewogram_client/features/support/presentation/admin_support_tickets_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/support_login_logs_screen.dart';
-import 'package:lewogram_client/features/chat/data/chat_models.dart';
-import 'package:lewogram_client/features/chat/presentation/chat_screen.dart';
-
-Future<void> navigateSupportChat(BuildContext context) async {
-  final api = AppScope.of(context).apiClient;
-  try {
-    final me = await api.getMe();
-    if (!context.mounted) return;
-    final primary = me['primary_role']?.toString().trim();
-    final staff = {'owner', 'chief_admin', 'admin'}.contains(primary);
-    final raw = await api.getSupportChat();
-    if (!context.mounted) return;
-    final m = Map<String, dynamic>.from(raw);
-    final id = (m['id'] as num).toInt();
-    final title = ChatItem.fromJson(m).resolvedTitle;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => ChatScreen(
-          chatId: id,
-          apiClient: api,
-          chatType: 'support',
-          allowSupportStaffReply: staff,
-          initialDisplayTitle: title,
-        ),
-      ),
-    );
-  } on ApiException catch (e) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(e.message)));
-  }
-}
 
 /// Тело админ-хаба (без вложенного [Scaffold]) — для встраивания во вкладку владельца.
 class AdminHubBody extends StatelessWidget {
@@ -130,16 +97,6 @@ class AdminHubBody extends StatelessWidget {
                         ),
                       );
                     },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: Icon(Icons.support_agent_outlined,
-                        color: scheme.primary),
-                    title: const Text('Чат поддержки'),
-                    subtitle: const Text(
-                        'Все пользователи; ответ по цитате — admin+'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => navigateSupportChat(context),
                   ),
                   if (showDiagnostics) ...[
                     const Divider(height: 1),

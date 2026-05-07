@@ -83,7 +83,10 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   Duration get refreshInterval => const Duration(seconds: 4);
 
   @override
-  Future<void> performRefresh() => _loadMessages(silent: true);
+  Future<void> performRefresh() async {
+    await _loadMessages(silent: true);
+    if (_isSupportTicket()) await _loadTicketStatus();
+  }
 
   /// После успешного переименования (или ввод пользователя до появления API).
   String? _titleOverride;
@@ -245,6 +248,17 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
   }
 
   Future<void> _send() async {
+    if (_ticketFinalizedBlocked) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Тикет окончательно закрыт. Написать можно после реоткрытия главным админом или владельцем.',
+          ),
+        ),
+      );
+      return;
+    }
     if (_peerComposeBlocked) {
       final hint = _peerComposeHint?.trim();
       if (!mounted) return;
@@ -297,6 +311,14 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
 
   bool _isSupportTicket() =>
       widget.chatType?.trim().toLowerCase() == 'support_ticket';
+
+  /// Нельзя писать в тикете после финального закрытия (до реоткрытия chief/owner).
+  bool get _ticketFinalizedBlocked =>
+      _isSupportTicket() &&
+      ((_ticket?['support_status'] as String? ?? '').toLowerCase() ==
+          'closed_finalized');
+
+  bool get _composeBlocked => _peerComposeBlocked || _ticketFinalizedBlocked;
 
   Map<String, dynamic>? _ticket;
   Set<String> _myRoles = const {};
@@ -420,6 +442,12 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
               spacing: 8,
               runSpacing: 4,
               children: [
+                if (!finalized && isMyTicket)
+                  OutlinedButton.icon(
+                    onPressed: _openTicketLiveGeoForRequester,
+                    icon: const Icon(Icons.share_location_outlined),
+                    label: const Text('Лайв-гео для владельца'),
+                  ),
                 if (!finalized)
                   OutlinedButton.icon(
                     onPressed: () =>
@@ -541,59 +569,14 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       final state = await widget.apiClient.getMySupportAccess();
       if (!mounted) return false;
       if (state['active'] == true) {
-        // Уже активен — отдельно предложим включить лайв-гео, если ещё не запущена.
         await _maybeOfferLiveGeo(state['expires_at']?.toString());
         return true;
       }
-      bool allowLiveGeo = false;
-      final allow = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setSt) => AlertDialog(
-            title: const Text('Включить доступ поддержке'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Для отправки расширенной диагностики нужен временный доступ '
-                  'на 30 минут. Его можно отключить сразу после отправки.',
-                ),
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: allowLiveGeo,
-                  onChanged: (v) =>
-                      setSt(() => allowLiveGeo = v ?? false),
-                  title: const Text('Лайв-геолокация для владельца'),
-                  subtitle: const Text(
-                    'Координаты будут отправляться примерно раз в 15 секунд '
-                    'в течение действия доступа поддержки. Видит только владелец.',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Отмена'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Включить'),
-              ),
-            ],
-          ),
-        ),
+      return await _activateSupportAccessFromDialog(
+        intro:
+            'Для отправки расширенной диагностики нужен временный доступ '
+            'на 30 минут. Его можно отключить сразу после отправки.',
       );
-      if (allow != true || !mounted) return false;
-      final granted = await widget.apiClient.grantMySupportAccess(minutes: 30);
-      if (!mounted) return false;
-      if (allowLiveGeo) {
-        _startLiveGeoFromExpiresAt(granted['expires_at']?.toString());
-      }
-      return true;
     } on ApiException catch (e) {
       if (!mounted) return false;
       ScaffoldMessenger.of(context)
@@ -603,6 +586,85 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
       if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
       return false;
+    }
+  }
+
+  /// Диалог включения доступа поддержке на 30 минут + опционально лайв-гео.
+  Future<bool> _activateSupportAccessFromDialog({required String intro}) async {
+    bool allowLiveGeo = false;
+    final allow = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Включить доступ поддержке'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(intro),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: allowLiveGeo,
+                onChanged: (v) =>
+                    setSt(() => allowLiveGeo = v ?? false),
+                title: const Text('Лайв-геолокация для владельца'),
+                subtitle: const Text(
+                  'Координаты будут отправляться примерно раз в 15 секунд '
+                  'в течение действия доступа поддержки. Видит только владелец.',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Включить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (allow != true || !mounted) return false;
+    final granted = await widget.apiClient.grantMySupportAccess(minutes: 30);
+    if (!mounted) return false;
+    if (allowLiveGeo) {
+      _startLiveGeoFromExpiresAt(granted['expires_at']?.toString());
+    }
+    return true;
+  }
+
+  /// Из баннера тикета: включить доступ и стрим координат для владельца.
+  Future<void> _openTicketLiveGeoForRequester() async {
+    try {
+      final state = await widget.apiClient.getMySupportAccess();
+      if (!mounted) return;
+      if (state['active'] == true) {
+        await _maybeOfferLiveGeo(state['expires_at']?.toString());
+        return;
+      }
+      final ok = await _activateSupportAccessFromDialog(
+        intro:
+            'Временный доступ поддержке на 30 минут. По желанию включите '
+            'лайв-геолокацию — координаты увидит только владелец сервера.',
+      );
+      if (ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Доступ поддержке включён')),
+        );
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -829,7 +891,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     final showProfileAction = _isDirectChat() && peerForProfile != null;
     final hideRename = widget.chatType?.toLowerCase() == 'support' &&
         !widget.allowSupportStaffReply;
-    final showSupportDiagnosticAction = _isSupportChat();
+    final showSupportDiagnosticAction =
+        _isSupportChat() || _isSupportTicket();
 
     return Scaffold(
       appBar: AppBar(
@@ -1036,6 +1099,29 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                       ),
                     ),
                   ),
+                if (_isSupportTicket() && _ticketFinalizedBlocked)
+                  Material(
+                    color: cs.surfaceContainerHighest,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.lock_outline,
+                              color: cs.onSurfaceVariant, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Тикет окончательно закрыт. Ответ возможен после реоткрытия главным админом или владельцем.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: Row(
@@ -1044,7 +1130,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                       Expanded(
                         child: TextField(
                           controller: _textCtrl,
-                          enabled: !_peerComposeBlocked,
+                          enabled: !_composeBlocked,
                           decoration: InputDecoration(
                             hintText: 'Сообщение…',
                             filled: true,
@@ -1076,7 +1162,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
                       ),
                       const SizedBox(width: 6),
                       FilledButton(
-                        onPressed: _peerComposeBlocked ? null : _send,
+                        onPressed: _composeBlocked ? null : _send,
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.all(14),
                           shape: const CircleBorder(),

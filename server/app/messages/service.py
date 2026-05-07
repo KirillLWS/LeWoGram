@@ -346,6 +346,13 @@ async def send_text_message(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Отвечать в чате поддержки могут только сотрудники (admin и выше)",
             )
+    if ctype == "support_ticket":
+        st = str(chat.get("support_status") or "").strip().lower()
+        if st == "closed_finalized":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Тикет окончательно закрыт. Писать можно после реоткрытия главным админом или владельцем.",
+            )
 
     msg_id = await db.create_message(
         body.chat_id,
