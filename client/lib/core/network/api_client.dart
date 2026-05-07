@@ -1248,33 +1248,6 @@ class ApiClient {
     }
   }
 
-  /// Глобальный чат поддержки ([GET /messages/support/chat]).
-  Future<Map<String, dynamic>> getSupportChat() async {
-    final uri = _uri('/messages/support/chat');
-    try {
-      final resp = await _authorizedJsonRequest(
-        (headers) => _http.get(uri, headers: headers),
-      );
-      if (resp.statusCode != 200) {
-        throw ApiException(
-          _extractErrorMessage(resp.body),
-          statusCode: resp.statusCode,
-        );
-      }
-      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
-      if (decoded is! Map<String, dynamic>) {
-        throw ApiException('Неверный ответ сервера');
-      }
-      return decoded;
-    } on SocketException catch (e) {
-      throw ApiException('Нет сети: ${e.message}');
-    } on http.ClientException catch (e) {
-      throw ApiException('Сеть: ${e.message}');
-    } on FormatException catch (e) {
-      throw ApiException('Неверный JSON чата поддержки: ${e.message}');
-    }
-  }
-
   /// Диагностика для поддержки ([POST /users/me/support-diagnostic]).
   Future<Map<String, dynamic>> submitSupportDiagnostic({
     required String body,

@@ -307,8 +307,6 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     return t == 'direct';
   }
 
-  bool _isSupportChat() => widget.chatType?.trim().toLowerCase() == 'support';
-
   bool _isSupportTicket() =>
       widget.chatType?.trim().toLowerCase() == 'support_ticket';
 
@@ -889,10 +887,7 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
     final cs = theme.colorScheme;
     final peerForProfile = _resolvedPeerUserId();
     final showProfileAction = _isDirectChat() && peerForProfile != null;
-    final hideRename = widget.chatType?.toLowerCase() == 'support' &&
-        !widget.allowSupportStaffReply;
-    final showSupportDiagnosticAction =
-        _isSupportChat() || _isSupportTicket();
+    final showSupportDiagnosticAction = _isSupportTicket();
 
     return Scaffold(
       appBar: AppBar(
@@ -932,12 +927,11 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
               tooltip: 'Отправить диагностику',
               onPressed: _submitSupportDiagnosticFromChat,
             ),
-          if (!hideRename)
-            IconButton(
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: 'Переименовать',
-              onPressed: _showRenameDialog,
-            ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Переименовать',
+            onPressed: _showRenameDialog,
+          ),
         ],
       ),
       body: Column(
@@ -990,7 +984,8 @@ class _ChatScreenState extends State<ChatScreen> with AutoRefreshMixin {
 
                         final bubble = GestureDetector(
                           onLongPress: widget.allowSupportStaffReply &&
-                                  widget.chatType?.toLowerCase() == 'support'
+                                  widget.chatType?.toLowerCase() ==
+                                      'support_ticket'
                               ? () {
                                   setState(() => _replyToMessageId = m.id);
                                   ScaffoldMessenger.of(context).showSnackBar(

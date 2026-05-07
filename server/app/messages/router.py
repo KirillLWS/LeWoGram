@@ -63,16 +63,6 @@ async def create_group_chat_endpoint(
     return await messages_service.create_group_chat(db, uid, body)
 
 
-@router.get("/support/chat", response_model=ChatResponse)
-async def get_support_chat(
-    user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[Database, Depends(get_db)],
-) -> ChatResponse:
-    """Глобальный чат поддержки (все пользователи пишут; ответы по цитате — только staff)."""
-    uid = int(user["id"])
-    return await messages_service.open_support_chat(db, uid)
-
-
 @router.get("/chats", response_model=list[ChatResponse])
 async def list_chats_endpoint(
     user: Annotated[dict, Depends(get_current_user)],

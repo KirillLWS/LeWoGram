@@ -73,9 +73,6 @@ class Database:
         from app.database.support_access_migrations import apply_support_access_migrations
 
         await apply_support_access_migrations(self._db_path)
-        from app.database.support_chat_migrations import apply_support_chat_migrations
-
-        await apply_support_chat_migrations(self._db_path)
         from app.database.user_audit_migrations import apply_user_audit_migrations
 
         await apply_user_audit_migrations(self._db_path)
