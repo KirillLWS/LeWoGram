@@ -3,8 +3,10 @@
 from app.config.config import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     BACKUP_PATH,
+    CLIENT_UPDATE_URL,
     DATABASE_PATH,
     MEDIA_PATH,
+    MIN_CLIENT_VERSION,
     REFRESH_TOKEN_EXPIRE_DAYS,
     SECRET_KEY,
     backup_dir,
@@ -14,8 +16,10 @@ from app.config.config import (
 __all__ = [
     "ACCESS_TOKEN_EXPIRE_MINUTES",
     "BACKUP_PATH",
+    "CLIENT_UPDATE_URL",
     "DATABASE_PATH",
     "MEDIA_PATH",
+    "MIN_CLIENT_VERSION",
     "REFRESH_TOKEN_EXPIRE_DAYS",
     "SECRET_KEY",
     "backup_dir",

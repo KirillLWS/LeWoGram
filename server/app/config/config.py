@@ -37,6 +37,17 @@ REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS",
 USER_ABOUT_MAX_LEN: int = 2000
 AVATAR_MAX_BYTES: int = 5 * 1024 * 1024
 
+# --- Клиент Flutter: минимальная поддерживаемая версия (semver x.y.z) и ссылка на обновление ---
+# Пример: MIN_CLIENT_VERSION=0.0.2 — клиенты с version < 0.0.2 не проходят compatibility gate.
+MIN_CLIENT_VERSION: str = os.environ.get("MIN_CLIENT_VERSION", "0.0.1").strip() or "0.0.1"
+CLIENT_UPDATE_URL: str = (
+    os.environ.get(
+        "CLIENT_UPDATE_URL",
+        "https://github.com/",
+    ).strip()
+    or "https://github.com/"
+)
+
 
 def media_dir() -> Path:
     """Абсолютный путь к каталогу медиа (удобно для storage)."""

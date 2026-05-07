@@ -28,7 +28,13 @@ from app.admin.audit_router import router as admin_audit_router
 from app.admin.support_router import router as admin_support_router
 from app.admin.users_moderation_router import router as admin_users_moderation_router
 from app.auth.router import router as auth_router
-from app.config import BACKUP_PATH, DATABASE_PATH, MEDIA_PATH
+from app.config import (
+    BACKUP_PATH,
+    CLIENT_UPDATE_URL,
+    DATABASE_PATH,
+    MEDIA_PATH,
+    MIN_CLIENT_VERSION,
+)
 from app.device_transfer.router import router as device_transfer_router
 from app.database.database import Database
 from app.friends.router import router as friends_router
@@ -133,3 +139,15 @@ app.mount("/media", StaticFiles(directory=str(_media_root)), name="media")
 async def root() -> dict[str, str]:
     """Проверка живости сервера."""
     return {"status": "ok", "app": "LeWoGram"}
+
+
+@app.get("/client/requirements")
+async def client_requirements() -> dict[str, str]:
+    """
+    Публично, без JWT: минимальная версия клиента и URL для обновления (магазин / сайт).
+    Клиент сравнивает с package_info и блокирует основной UI при устаревании.
+    """
+    return {
+        "min_client_version": MIN_CLIENT_VERSION,
+        "update_url": CLIENT_UPDATE_URL,
+    }

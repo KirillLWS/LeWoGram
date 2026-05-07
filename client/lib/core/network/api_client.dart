@@ -1030,6 +1030,34 @@ class ApiClient {
     }
   }
 
+  /// GET `/client/requirements` — без авторизации; минимальная версия и ссылка на обновление.
+  Future<Map<String, dynamic>> fetchClientRequirements() async {
+    final uri = _uri('/client/requirements');
+    try {
+      final resp = await _http.get(uri).timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) {
+        throw ApiException(
+          'Не удалось получить требования к версии (HTTP ${resp.statusCode})',
+          statusCode: resp.statusCode,
+        );
+      }
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      throw ApiException('Неверный ответ сервера');
+    } on TimeoutException catch (_) {
+      throw ApiException('Превышено время ожидания сервера');
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ: ${e.message}');
+    }
+  }
+
   /// Загрузка аватара ([POST /users/me/avatar], поле формы `avatar`).
   Future<Map<String, dynamic>> uploadAvatar(File file) async {
     final uri = _uri('/users/me/avatar');

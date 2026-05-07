@@ -3,7 +3,7 @@ import 'package:lewogram_client/core/network/api_client.dart';
 import 'package:lewogram_client/app/app_scope.dart';
 import 'package:lewogram_client/features/settings/presentation/settings_screen.dart';
 import 'package:lewogram_client/app/home_shell.dart';
-import 'package:lewogram_client/app/session_gate.dart';
+import 'package:lewogram_client/app/compatibility_gate.dart';
 import 'package:lewogram_client/features/admin/presentation/invites_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/device_transfers_screen.dart';
 import 'package:lewogram_client/features/auth/presentation/login_screen.dart';
@@ -39,7 +39,7 @@ class _LeWoGramAppState extends State<LeWoGramApp> {
       case '/':
         return MaterialPageRoute<void>(
           settings: settings,
-          builder: (_) => const SessionGate(),
+          builder: (_) => const CompatibilityGate(),
         );
       case '/login':
         return MaterialPageRoute<void>(
