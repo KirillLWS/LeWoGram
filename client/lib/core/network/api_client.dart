@@ -1115,6 +1115,103 @@ class ApiClient {
     }
   }
 
+  /// Загрузка APK клиента на сервер ([POST /admin/client-apk]) — chief_admin / owner.
+  Future<Map<String, dynamic>> uploadClientApk(File file) async {
+    final uri = _uri('/admin/client-apk');
+    final token0 = await _tokenStorage.readToken();
+    final had = token0 != null && token0.isNotEmpty;
+
+    Future<http.Response> sendOnce() async {
+      final request = http.MultipartRequest('POST', uri);
+      final token = await _tokenStorage.readToken();
+      if (token != null && token.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+      request.files.add(
+        await http.MultipartFile.fromPath('file', file.path),
+      );
+      final streamed = await _http.send(request);
+      return http.Response.fromStream(streamed);
+    }
+
+    try {
+      var resp = await sendOnce();
+      if (resp.statusCode == 401 && had) {
+        if (await _tryRefreshAccessToken()) {
+          resp = await sendOnce();
+        }
+      }
+      if (resp.statusCode == 401) {
+        await _on401IfHadBearer(had, resp);
+      }
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ при загрузке APK: ${e.message}');
+    }
+  }
+
+  /// То же, что [uploadClientApk], но из байтов (если у файла нет прямого пути на устройстве).
+  Future<Map<String, dynamic>> uploadClientApkBytes(
+    List<int> bytes, {
+    String filename = 'release.apk',
+  }) async {
+    final uri = _uri('/admin/client-apk');
+    final token0 = await _tokenStorage.readToken();
+    final had = token0 != null && token0.isNotEmpty;
+
+    Future<http.Response> sendOnce() async {
+      final request = http.MultipartRequest('POST', uri);
+      final token = await _tokenStorage.readToken();
+      if (token != null && token.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: filename.endsWith('.apk') ? filename : '$filename.apk',
+        ),
+      );
+      final streamed = await _http.send(request);
+      return http.Response.fromStream(streamed);
+    }
+
+    try {
+      var resp = await sendOnce();
+      if (resp.statusCode == 401 && had) {
+        if (await _tryRefreshAccessToken()) {
+          resp = await sendOnce();
+        }
+      }
+      if (resp.statusCode == 401) {
+        await _on401IfHadBearer(had, resp);
+      }
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        throw ApiException(
+          _extractErrorMessage(resp.body),
+          statusCode: resp.statusCode,
+        );
+      }
+      return jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ApiException('Нет сети: ${e.message}');
+    } on http.ClientException catch (e) {
+      throw ApiException('Сеть: ${e.message}');
+    } on FormatException catch (e) {
+      throw ApiException('Неверный ответ при загрузке APK: ${e.message}');
+    }
+  }
+
   /// Создать личный чат ([POST /messages/chats/direct]).
   Future<Map<String, dynamic>> createDirectChat(int otherUserId) async {
     final uri = _uri('/messages/chats/direct');

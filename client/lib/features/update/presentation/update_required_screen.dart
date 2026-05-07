@@ -7,7 +7,8 @@ import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Блокирующий экран: версия ниже минимальной. Скачивание APK с этого же сервера [apkUrlOrPath].
+/// Блокирующий экран: версия ниже минимальной.
+/// После появления автоматически скачивает APK и открывает системный установщик.
 class UpdateRequiredScreen extends StatefulWidget {
   const UpdateRequiredScreen({
     super.key,
@@ -30,6 +31,7 @@ class UpdateRequiredScreen extends StatefulWidget {
 
 class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
   bool _busy = false;
+  bool _autoStarted = false;
 
   Uri? _resolveApkUri() {
     final t = widget.apkUrlOrPath.trim();
@@ -40,6 +42,18 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
     final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
     final p = t.startsWith('/') ? t : '/$t';
     return Uri.tryParse('$base$p');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _autoStarted) return;
+      if (_resolveApkUri() != null) {
+        _autoStarted = true;
+        _downloadAndInstall();
+      }
+    });
   }
 
   Future<void> _openInfoUrl() async {
@@ -67,7 +81,7 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
           SnackBar(
             content: Text(
               'Не удалось скачать APK (HTTP ${resp.statusCode}). '
-              'Проверьте, что файл загружен на сервер (POST /admin/client-apk).',
+              'Проверьте, что файл загружен на сервер.',
             ),
           ),
         );
@@ -75,7 +89,9 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
       }
       if (resp.bodyBytes.length < 2048) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Скачанный файл слишком мал — не похоже на APK')),
+          const SnackBar(
+            content: Text('Скачанный файл слишком мал — не похоже на APK'),
+          ),
         );
         return;
       }
@@ -133,7 +149,9 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
                 const SizedBox(height: 16),
                 Text(
                   'Установленная версия ${widget.currentVersion} ниже минимальной '
-                  '${widget.minimumVersion}. Скачайте новый APK с вашего сервера и установите.',
+                  '${widget.minimumVersion}. Загрузка нового APK начинается автоматически; '
+                  'после скачивания откроется установщик Android — подтвердите установку '
+                  '(полностью «тихую» установку без этого шага обычное приложение сделать не может).',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
@@ -146,6 +164,16 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
                           color: cs.onSurfaceVariant,
                         ),
                   ),
+                if (_busy) ...[
+                  const SizedBox(height: 24),
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Скачивание…',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ],
                 const Spacer(),
                 if (hasApk)
                   FilledButton.icon(
@@ -156,9 +184,9 @@ class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.download),
+                        : const Icon(Icons.refresh),
                     label: Text(
-                      _busy ? 'Скачивание…' : 'Скачать APK и установить',
+                      _busy ? 'Подождите…' : 'Повторить загрузку и установку',
                     ),
                   ),
                 if (hasApk && hasInfo) const SizedBox(height: 12),

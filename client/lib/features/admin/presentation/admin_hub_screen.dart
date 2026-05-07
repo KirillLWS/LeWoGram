@@ -9,6 +9,7 @@ import 'package:lewogram_client/features/admin/presentation/staff_users_screen.d
 import 'package:lewogram_client/features/admin/presentation/support_diagnostics_screen.dart';
 import 'package:lewogram_client/features/support/presentation/admin_support_tickets_screen.dart';
 import 'package:lewogram_client/features/admin/presentation/support_login_logs_screen.dart';
+import 'package:lewogram_client/features/admin/presentation/client_apk_upload_screen.dart';
 
 /// Тело админ-хаба (без вложенного [Scaffold]) — для встраивания во вкладку владельца.
 class AdminHubBody extends StatelessWidget {
@@ -24,6 +25,7 @@ class AdminHubBody extends StatelessWidget {
         final p = snap.data?['primary_role']?.toString().trim();
         final showDiagnostics = p == 'owner' || p == 'chief_admin';
         final showOwnerLogs = p == 'owner';
+        final showApkUpload = p == 'owner' || p == 'chief_admin';
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -98,6 +100,24 @@ class AdminHubBody extends StatelessWidget {
                       );
                     },
                   ),
+                  if (showApkUpload) ...[
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: Icon(Icons.android, color: scheme.primary),
+                      title: const Text('APK клиента на сервер'),
+                      subtitle: const Text(
+                        'Загрузить сборку для раздачи пользователям',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const ClientApkUploadScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                   if (showDiagnostics) ...[
                     const Divider(height: 1),
                     ListTile(
