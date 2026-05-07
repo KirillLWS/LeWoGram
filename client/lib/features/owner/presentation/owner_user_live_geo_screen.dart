@@ -87,8 +87,10 @@ class _OwnerUserLiveGeoScreenState extends State<OwnerUserLiveGeoScreen> {
   Future<void> _openOnMap(double lat, double lng) async {
     final uri = _osmUrl(lat, lng);
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
+    if (!mounted) return;
+    if (!ok) {
       await Clipboard.setData(ClipboardData(text: '$lat, $lng'));
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Координаты скопированы в буфер')),
       );

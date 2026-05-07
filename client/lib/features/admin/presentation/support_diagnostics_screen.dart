@@ -79,7 +79,6 @@ class _SupportDiagnosticsScreenState extends State<SupportDiagnosticsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Журнал диагностики'),

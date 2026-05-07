@@ -124,6 +124,8 @@ class _SupportTicketsScreenState extends State<SupportTicketsScreen> {
     descCtl.dispose();
     if (ok != true || !mounted) return;
 
+    final api = AppScope.of(context).apiClient;
+
     String? clientMeta;
     if (attachDiag) {
       try {
@@ -135,7 +137,6 @@ class _SupportTicketsScreenState extends State<SupportTicketsScreen> {
     }
 
     try {
-      final api = AppScope.of(context).apiClient;
       final t = await api.createSupportTicket(
         subject: subject.isEmpty ? null : subject,
         diagnosticBody: desc.isEmpty ? null : desc,

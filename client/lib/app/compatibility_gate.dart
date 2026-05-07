@@ -20,7 +20,8 @@ class _CompatibilityGateState extends State<CompatibilityGate> {
   String? _errorMessage;
   String _currentVersion = '';
   String _minVersion = '';
-  String _updateUrl = '';
+  String _apkUrl = '';
+  String _infoUrl = '';
 
   @override
   void initState() {
@@ -47,7 +48,6 @@ class _CompatibilityGateState extends State<CompatibilityGate> {
       final info = await PackageInfo.fromPlatform();
       final req = await api.fetchClientRequirements();
       final min = req['min_client_version']?.toString().trim() ?? '0.0.1';
-      final url = req['update_url']?.toString().trim() ?? '';
       final ver = info.version.trim();
 
       if (!mounted) return;
@@ -56,8 +56,8 @@ class _CompatibilityGateState extends State<CompatibilityGate> {
           _state = _GateState.blocked;
           _currentVersion = ver;
           _minVersion = min;
-          _updateUrl =
-              url.isNotEmpty ? url : 'https://github.com/';
+          _apkUrl = req['apk_url']?.toString().trim() ?? '';
+          _infoUrl = req['update_url']?.toString().trim() ?? '';
         });
         return;
       }
@@ -89,7 +89,8 @@ class _CompatibilityGateState extends State<CompatibilityGate> {
         return UpdateRequiredScreen(
           currentVersion: _currentVersion,
           minimumVersion: _minVersion,
-          updateUrl: _updateUrl,
+          apkUrlOrPath: _apkUrl,
+          infoUrl: _infoUrl,
         );
       case _GateState.error:
         final msg = _errorMessage ?? 'Неизвестная ошибка';

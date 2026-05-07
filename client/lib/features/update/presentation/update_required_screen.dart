@@ -1,28 +1,117 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:lewogram_client/core/config/app_config.dart';
+import 'package:open_file/open_file.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Блокирующий экран: клиент ниже [minimumVersion]. Назад не закрывает (PopScope).
-class UpdateRequiredScreen extends StatelessWidget {
+/// Блокирующий экран: версия ниже минимальной. Скачивание APK с этого же сервера [apkUrlOrPath].
+class UpdateRequiredScreen extends StatefulWidget {
   const UpdateRequiredScreen({
     super.key,
     required this.currentVersion,
     required this.minimumVersion,
-    required this.updateUrl,
+    required this.apkUrlOrPath,
+    required this.infoUrl,
   });
 
   final String currentVersion;
   final String minimumVersion;
-  final String updateUrl;
+  /// Путь `/releases/...` на базовом URL или полный `http(s)://`.
+  final String apkUrlOrPath;
+  /// Опционально: страница с описанием релиза.
+  final String infoUrl;
 
-  Future<void> _openUrl() async {
-    final u = Uri.tryParse(updateUrl.trim());
+  @override
+  State<UpdateRequiredScreen> createState() => _UpdateRequiredScreenState();
+}
+
+class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
+  bool _busy = false;
+
+  Uri? _resolveApkUri() {
+    final t = widget.apkUrlOrPath.trim();
+    if (t.isEmpty) return null;
+    if (t.startsWith('http://') || t.startsWith('https://')) {
+      return Uri.tryParse(t);
+    }
+    final base = AppConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final p = t.startsWith('/') ? t : '/$t';
+    return Uri.tryParse('$base$p');
+  }
+
+  Future<void> _openInfoUrl() async {
+    final u = Uri.tryParse(widget.infoUrl.trim());
     if (u == null) return;
     await launchUrl(u, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _downloadAndInstall() async {
+    final uri = _resolveApkUri();
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не задан URL APK на сервере')),
+      );
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final resp = await http.get(uri).timeout(const Duration(minutes: 5));
+      if (!mounted) return;
+      if (resp.statusCode != 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не удалось скачать APK (HTTP ${resp.statusCode}). '
+              'Проверьте, что файл загружен на сервер (POST /admin/client-apk).',
+            ),
+          ),
+        );
+        return;
+      }
+      if (resp.bodyBytes.length < 2048) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Скачанный файл слишком мал — не похоже на APK')),
+        );
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/lewo_update.apk');
+      await file.writeAsBytes(resp.bodyBytes, flush: true);
+
+      final result = await OpenFile.open(file.path);
+      if (!mounted) return;
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Установщик: ${result.message}')),
+        );
+      }
+    } on SocketException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Сеть: ${e.message}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final hasApk = widget.apkUrlOrPath.trim().isNotEmpty;
+    final hasInfo = widget.infoUrl.trim().isNotEmpty;
+
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -43,17 +132,51 @@ class UpdateRequiredScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Установленная версия $currentVersion ниже минимальной '
-                  '$minimumVersion. Обновите приложение, чтобы продолжить.',
+                  'Установленная версия ${widget.currentVersion} ниже минимальной '
+                  '${widget.minimumVersion}. Скачайте новый APK с вашего сервера и установите.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
+                const SizedBox(height: 16),
+                if (hasApk)
+                  Text(
+                    'Источник: ${_resolveApkUri()}',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
+                  ),
                 const Spacer(),
-                FilledButton.icon(
-                  onPressed: _openUrl,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Открыть страницу обновления'),
-                ),
+                if (hasApk)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _downloadAndInstall,
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download),
+                    label: Text(
+                      _busy ? 'Скачивание…' : 'Скачать APK и установить',
+                    ),
+                  ),
+                if (hasApk && hasInfo) const SizedBox(height: 12),
+                if (hasInfo)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _openInfoUrl,
+                    icon: const Icon(Icons.info_outline),
+                    label: const Text('Описание релиза'),
+                  ),
+                if (!hasApk && !hasInfo)
+                  Text(
+                    'На сервере не настроены apk_url и update_url — '
+                    'обратитесь к администратору.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: cs.error,
+                        ),
+                  ),
               ],
             ),
           ),

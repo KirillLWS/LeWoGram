@@ -37,15 +37,15 @@ REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS",
 USER_ABOUT_MAX_LEN: int = 2000
 AVATAR_MAX_BYTES: int = 5 * 1024 * 1024
 
-# --- Клиент Flutter: минимальная поддерживаемая версия (semver x.y.z) и ссылка на обновление ---
-# Пример: MIN_CLIENT_VERSION=0.0.2 — клиенты с version < 0.0.2 не проходят compatibility gate.
+# --- Клиент Flutter (закрытый APK на этом же сервере) ---
+# MIN_CLIENT_VERSION=0.0.2 — ниже этой версии клиент блокируется до обновления.
 MIN_CLIENT_VERSION: str = os.environ.get("MIN_CLIENT_VERSION", "0.0.1").strip() or "0.0.1"
-CLIENT_UPDATE_URL: str = (
-    os.environ.get(
-        "CLIENT_UPDATE_URL",
-        "https://github.com/",
-    ).strip()
-    or "https://github.com/"
+# Опционально: страница с описанием релиза (вики и т.п.).
+CLIENT_UPDATE_URL: str = os.environ.get("CLIENT_UPDATE_URL", "").strip()
+# Публичная раздача: GET /releases/<CLIENT_APK_FILENAME> (см. StaticFiles в main).
+RELEASES_PATH: str = "data/releases/"
+CLIENT_APK_FILENAME: str = (
+    os.environ.get("CLIENT_APK_FILENAME", "lewo.apk").strip() or "lewo.apk"
 )
 
 

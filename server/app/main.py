@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.admin.client_release_router import router as client_release_router
 from app.admin.invites_router import router as admin_invites_router
 from app.admin.roles_router import router as admin_roles_router
 from app.admin.audit_router import router as admin_audit_router
@@ -30,10 +31,12 @@ from app.admin.users_moderation_router import router as admin_users_moderation_r
 from app.auth.router import router as auth_router
 from app.config import (
     BACKUP_PATH,
+    CLIENT_APK_FILENAME,
     CLIENT_UPDATE_URL,
     DATABASE_PATH,
     MEDIA_PATH,
     MIN_CLIENT_VERSION,
+    RELEASES_PATH,
 )
 from app.device_transfer.router import router as device_transfer_router
 from app.database.database import Database
@@ -58,6 +61,7 @@ async def lifespan(app: FastAPI):
     db_file.parent.mkdir(parents=True, exist_ok=True)
     (_SERVER_ROOT / MEDIA_PATH).mkdir(parents=True, exist_ok=True)
     (_SERVER_ROOT / BACKUP_PATH).mkdir(parents=True, exist_ok=True)
+    (_SERVER_ROOT / RELEASES_PATH).mkdir(parents=True, exist_ok=True)
 
     db = Database(db_file)
     await db.init_db()
@@ -129,10 +133,15 @@ app.include_router(admin_invites_router, prefix="/admin")
 app.include_router(admin_support_router, prefix="/admin")
 app.include_router(admin_audit_router, prefix="/admin")
 app.include_router(admin_users_moderation_router, prefix="/admin")
+app.include_router(client_release_router, prefix="/admin")
 
 _media_root = (_SERVER_ROOT / MEDIA_PATH).resolve()
 _media_root.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(_media_root)), name="media")
+
+_releases_root = (_SERVER_ROOT / RELEASES_PATH).resolve()
+_releases_root.mkdir(parents=True, exist_ok=True)
+app.mount("/releases", StaticFiles(directory=str(_releases_root)), name="releases")
 
 
 @app.get("/")
@@ -144,10 +153,10 @@ async def root() -> dict[str, str]:
 @app.get("/client/requirements")
 async def client_requirements() -> dict[str, str]:
     """
-    Публично, без JWT: минимальная версия клиента и URL для обновления (магазин / сайт).
-    Клиент сравнивает с package_info и блокирует основной UI при устаревании.
+    Публично, без JWT: минимальная версия, опционально страница релиза, URL APK на этом сервере.
     """
     return {
         "min_client_version": MIN_CLIENT_VERSION,
         "update_url": CLIENT_UPDATE_URL,
+        "apk_url": f"/releases/{CLIENT_APK_FILENAME}",
     }
